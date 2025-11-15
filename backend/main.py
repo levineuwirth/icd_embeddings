@@ -135,11 +135,12 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# Define the base directory of the project
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Define the base directory relative to the current file
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Load the model and preprocessing objects
 try:
+    # Construct paths relative to the current script's location
     model_path = os.path.join(BASE_DIR, 'model/readmit_hypertrial_deepset.keras')
     encoder_path = os.path.join(BASE_DIR, 'model/readmit_2016_label_encoder.pkl')
     scaler_path = os.path.join(BASE_DIR, 'model/readmit_2016_age_scaler.pkl')
@@ -150,7 +151,7 @@ try:
     with open(scaler_path, 'rb') as file:
         age_scaler = pickle.load(file)
 except FileNotFoundError as e:
-    raise RuntimeError("Model or preprocessing files not found. Make sure the paths are correct.") from e
+    raise RuntimeError(f"Model or preprocessing files not found. Looked in {os.path.join(BASE_DIR, 'model')}") from e
 
 
 class PatientData(BaseModel):
