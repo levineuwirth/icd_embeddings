@@ -120,6 +120,46 @@ class TransformerBlock(tf.keras.layers.Layer):
     def from_config(cls, config):
         return cls(**config)
 
+@tf.keras.utils.register_keras_serializable(package="Custom")
+class F2Score(tf.keras.metrics.Metric):
+    """
+    F2 score metric (weights recall higher than precision).
+    """
+    def __init__(self, name='f2_score', threshold=0.5, **kwargs):
+        super(F2Score, self).__init__(name=name, **kwargs)
+        self.tp = self.add_weight(name='tp', initializer='zeros')
+        self.fp = self.add_weight(name='fp', initializer='zeros')
+        self.fn = self.add_weight(name='fn', initializer='zeros')
+        self.epsilon = tf.keras.backend.epsilon()
+        self.threshold = threshold
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_pred = tf.cast(y_pred > self.threshold, tf.float32)
+        y_true = tf.cast(y_true, tf.float32)
+        self.tp.assign_add(tf.reduce_sum(y_true * y_pred))
+        self.fp.assign_add(tf.reduce_sum((1 - y_true) * y_pred))
+        self.fn.assign_add(tf.reduce_sum(y_true * (1 - y_pred)))
+
+    def result(self):
+        precision = self.tp / (self.tp + self.fp + self.epsilon)
+        recall = self.tp / (self.tp + self.fn + self.epsilon)
+        f2 = (5 * precision * recall) / (4 * precision + recall + self.epsilon)
+        return f2
+
+    def reset_state(self, sample_weight=None):
+        self.tp.assign(0.0)
+        self.fp.assign(0.0)
+        self.fn.assign(0.0)
+
+    def get_config(self):
+        config = super(F2Score, self).get_config()
+        config.update({'name': self.name, 'threshold': self.threshold})
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
 
 app = FastAPI(
     title="ICD Prediction API",
