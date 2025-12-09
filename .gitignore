@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ICD-10 data files (can be regenerated)
+backend/data/icd-10.zip
+backend/data/icd10_codes.json
+backend/data/Table and Index/

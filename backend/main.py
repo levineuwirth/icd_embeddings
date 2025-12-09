@@ -7,7 +7,8 @@ It includes endpoints for making predictions and searching for ICD codes.
 
 import pickle
 import os
-from typing import List
+import json
+from typing import List, Dict
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -138,18 +139,28 @@ app.add_middleware(
 # Define the base directory relative to the current file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Global variable to store ICD-10 codes
+icd_codes: Dict[str, str] = {}
+
 # Load the model and preprocessing objects
 try:
     # Construct paths relative to the current script's location
     model_path = os.path.join(BASE_DIR, 'model/readmit_hypertrial_deepset.keras')
     encoder_path = os.path.join(BASE_DIR, 'model/readmit_2016_label_encoder.pkl')
     scaler_path = os.path.join(BASE_DIR, 'model/readmit_2016_age_scaler.pkl')
+    icd_data_path = os.path.join(BASE_DIR, 'data/icd10_codes.json')
 
     model = load_model(model_path)
     with open(encoder_path, 'rb') as file:
         encoder = pickle.load(file)
     with open(scaler_path, 'rb') as file:
         age_scaler = pickle.load(file)
+
+    # Load ICD-10 codes
+    with open(icd_data_path, 'r', encoding='utf-8') as file:
+        icd_codes = json.load(file)
+    print(f"Loaded {len(icd_codes)} ICD-10 codes")
+
 except FileNotFoundError as e:
     raise RuntimeError(f"Model or preprocessing files not found. Looked in {os.path.join(BASE_DIR, 'model')}") from e
 
@@ -293,28 +304,56 @@ async def predict(data: PatientData):
 
 
 @app.get("/search_icd/")
-async def search_icd(q: str):
+async def search_icd(q: str, limit: int = 50):
     """
     Searches for ICD-10 codes and their descriptions.
 
     Args:
-        q (str): The search query.
+        q (str): The search query (searches both codes and descriptions).
+        limit (int): Maximum number of results to return (default: 50).
 
     Returns:
-        dict: A dictionary of matching ICD codes and descriptions.
+        dict: A dictionary of matching ICD codes and descriptions, ordered by relevance.
     """
-    # TODO: Load ICD codes and descriptions from a proper dataset.
-    # This is a placeholder implementation.
-    icd_data = {
-        "A000": "Cholera due to Vibrio cholerae 01, biovar cholerae",
-        "A001": "Cholera due to Vibrio cholerae 01, biovar eltor",
-        "A009": "Cholera, unspecified",
-        "I10": "Essential (primary) hypertension",
-        "I11": "Hypertensive heart disease",
-        "I12": "Hypertensive chronic kidney disease"
-    }
+    if not q or len(q.strip()) == 0:
+        return {}
 
-    results = {code: desc for code, desc in icd_data.items() if q.lower() in code.lower() or q.lower() in desc.lower()}
+    query = q.strip().lower()
+    results = {}
+
+    # Categorize results by match type for better ordering
+    exact_code_matches = {}
+    code_starts_with = {}
+    code_contains = {}
+    desc_contains = {}
+
+    for code, description in icd_codes.items():
+        code_lower = code.lower()
+        desc_lower = description.lower()
+
+        # Exact code match (highest priority)
+        if code_lower == query:
+            exact_code_matches[code] = description
+        # Code starts with query (high priority)
+        elif code_lower.startswith(query):
+            code_starts_with[code] = description
+        # Code contains query (medium priority)
+        elif query in code_lower:
+            code_contains[code] = description
+        # Description contains query (lower priority)
+        elif query in desc_lower:
+            desc_contains[code] = description
+
+    # Combine results in priority order
+    results.update(exact_code_matches)
+    results.update(code_starts_with)
+    results.update(code_contains)
+    results.update(desc_contains)
+
+    # Limit results
+    if len(results) > limit:
+        results = dict(list(results.items())[:limit])
+
     return results
 
 @app.post("/upload_icd_file/", response_model=List[str])
