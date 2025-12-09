@@ -8,9 +8,10 @@ const OutcomeCalculator = () => {
     gender: '',
     primaryPayer: '',
     householdIncome: '',
-    icdMethod: 'manual', // user has choice between 'manual' or 'upload'
+    icdMethod: 'manual', // user has choice between 'manual', 'paste', or 'upload'
     icdCodes: ['', '', '', '', ''],
-    uploadedFile: null
+    uploadedFile: null,
+    pastedText: ''
   });
 
   const [results, setResults] = useState({
@@ -19,6 +20,7 @@ const OutcomeCalculator = () => {
   });
 
   const [icdSearchResults, setIcdSearchResults] = useState([]);
+  const [validationResults, setValidationResults] = useState(null);
 
   const primaryPayerOptions = [
     'Medicare',
@@ -95,22 +97,55 @@ const OutcomeCalculator = () => {
       uploadedFile: file
     }));
 
-    const formData = new FormData();
-    formData.append('file', file);
+    const uploadFormData = new FormData();
+    uploadFormData.append('file', file);
 
     try {
-      const response = await axios.post(`${API_URL}/upload_icd_file/`, formData, {
+      const response = await axios.post(`${API_URL}/upload_icd_file/`, uploadFormData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
       });
+
+      const { valid_codes, invalid_codes, warnings } = response.data;
+      setValidationResults(response.data);
       setFormData(prev => ({
         ...prev,
-        icdCodes: response.data
+        icdCodes: valid_codes
       }));
     } catch (error) {
       console.error("Error uploading file:", error);
       alert("There was an error processing the uploaded file.");
+    }
+  };
+
+  const handlePasteChange = (value) => {
+    setFormData(prev => ({
+      ...prev,
+      pastedText: value
+    }));
+  };
+
+  const handleParsePastedCodes = async () => {
+    if (!formData.pastedText.trim()) {
+      alert("Please paste some ICD codes first.");
+      return;
+    }
+
+    try {
+      const response = await axios.post(`${API_URL}/parse_icd_codes/`, {
+        text: formData.pastedText
+      });
+
+      const { valid_codes, invalid_codes, warnings } = response.data;
+      setValidationResults(response.data);
+      setFormData(prev => ({
+        ...prev,
+        icdCodes: valid_codes
+      }));
+    } catch (error) {
+      console.error("Error parsing codes:", error);
+      alert("There was an error parsing the pasted codes.");
     }
   };
 
@@ -136,10 +171,10 @@ const OutcomeCalculator = () => {
 
     try {
       const response = await axios.post(`${API_URL}/predict/`, payload);
-      const { prediction, interpretation } = response.data;
+      const { readmission, mortality } = response.data;
       setResults({
-        readmission30: `${(prediction * 100).toFixed(1)}%`,
-        mortality30: 'N/A' // The model does not predict mortality
+        readmission30: `${(readmission.prediction * 100).toFixed(1)}%`,
+        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`
       });
     } catch (error) {
       console.error("Error calculating risk:", error);
@@ -237,7 +272,10 @@ const OutcomeCalculator = () => {
                       type="radio"
                       name="icdMethod"
                       checked={formData.icdMethod === 'manual'}
-                      onChange={() => handleInputChange('icdMethod', 'manual')}
+                      onChange={() => {
+                        handleInputChange('icdMethod', 'manual');
+                        setValidationResults(null);
+                      }}
                     />
                     Manual Input
                   </label>
@@ -245,8 +283,23 @@ const OutcomeCalculator = () => {
                     <input
                       type="radio"
                       name="icdMethod"
+                      checked={formData.icdMethod === 'paste'}
+                      onChange={() => {
+                        handleInputChange('icdMethod', 'paste');
+                        setValidationResults(null);
+                      }}
+                    />
+                    Paste Codes
+                  </label>
+                  <label className="radio-label">
+                    <input
+                      type="radio"
+                      name="icdMethod"
                       checked={formData.icdMethod === 'upload'}
-                      onChange={() => handleInputChange('icdMethod', 'upload')}
+                      onChange={() => {
+                        handleInputChange('icdMethod', 'upload');
+                        setValidationResults(null);
+                      }}
                     />
                     Upload File
                   </label>
@@ -296,11 +349,33 @@ const OutcomeCalculator = () => {
                       Add More
                     </button>
                   </div>
+                ) : formData.icdMethod === 'paste' ? (
+                  <div className="paste-container">
+                    <p className="instruction-text">
+                      Paste ICD codes in any format (comma, space, or line-separated):
+                    </p>
+                    <textarea
+                      className="paste-textarea"
+                      placeholder="Example: I10, E11.9, J44.0&#10;or one per line:&#10;I10&#10;E11.9&#10;J44.0"
+                      value={formData.pastedText}
+                      onChange={(e) => handlePasteChange(e.target.value)}
+                      rows={6}
+                    />
+                    <button
+                      onClick={handleParsePastedCodes}
+                      className="parse-button"
+                    >
+                      Parse & Validate Codes
+                    </button>
+                  </div>
                 ) : (
                   <div className="upload-container">
+                    <p className="instruction-text">
+                      Upload a .txt or .csv file with ICD codes (any format accepted)
+                    </p>
                     <input
                       type="file"
-                      accept=".csv,.txt,.xlsx"
+                      accept=".csv,.txt"
                       onChange={handleFileUpload}
                       className="file-input"
                     />
@@ -308,6 +383,49 @@ const OutcomeCalculator = () => {
                       <p className="file-name">
                         Selected: {formData.uploadedFile.name}
                       </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Validation Results */}
+                {validationResults && (
+                  <div className="validation-results">
+                    <div className="validation-summary">
+                      <span className="valid-count">✓ {validationResults.valid_codes.length} valid codes</span>
+                      {validationResults.invalid_codes.length > 0 && (
+                        <span className="invalid-count">⚠ {validationResults.invalid_codes.length} invalid codes</span>
+                      )}
+                    </div>
+
+                    {validationResults.warnings.length > 0 && (
+                      <div className="validation-warnings">
+                        {validationResults.warnings.map((warning, idx) => (
+                          <p key={idx} className="warning-text">⚠ {warning}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {validationResults.invalid_codes.length > 0 && (
+                      <div className="invalid-codes-list">
+                        <p className="invalid-header">Invalid codes found:</p>
+                        {validationResults.invalid_codes.map((item, idx) => (
+                          <div key={idx} className="invalid-code-item">
+                            <span className="invalid-code-name">{item.code}</span>
+                            {item.suggestions.length > 0 && (
+                              <span className="suggestions">
+                                (Did you mean: {item.suggestions.join(', ')}?)
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {validationResults.valid_codes.length > 0 && (
+                      <div className="valid-codes-preview">
+                        <p className="preview-header">Valid codes loaded:</p>
+                        <p className="codes-preview">{validationResults.valid_codes.join(', ')}</p>
+                      </div>
                     )}
                   </div>
                 )}
@@ -353,8 +471,8 @@ const OutcomeCalculator = () => {
 
           <div className="description">
             <p className="description-text">
-              This calculator predicts 30-day mortality and 30-day readmission, incorporating prior
-              diagnoses and other important patient data.
+              This calculator predicts 30-day mortality and 30-day readmission risk using advanced
+              machine learning models trained on ICD-10 diagnosis codes and patient demographics.
             </p>
             <p className="disclaimer-italic">
               **Disclaimer: This tool is for educational and clinical decision support only. Always use clinical judgment and consult appropriate healthcare providers.**

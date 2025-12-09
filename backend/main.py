@@ -139,27 +139,41 @@ app.add_middleware(
 # Define the base directory relative to the current file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Global variable to store ICD-10 codes
+# Global variables to store models and ICD-10 codes
 icd_codes: Dict[str, str] = {}
+model_readmit = None
+model_mortality = None
+encoder = None
+age_scaler = None
 
-# Load the model and preprocessing objects
+# Load the models and preprocessing objects
 try:
     # Construct paths relative to the current script's location
-    model_path = os.path.join(BASE_DIR, 'model/readmit_hypertrial_deepset.keras')
-    encoder_path = os.path.join(BASE_DIR, 'model/readmit_2016_label_encoder.pkl')
-    scaler_path = os.path.join(BASE_DIR, 'model/readmit_2016_age_scaler.pkl')
+    readmit_model_path = os.path.join(BASE_DIR, 'model/readmit_hypertrial_auc.keras')
+    mortality_model_path = os.path.join(BASE_DIR, 'model/mort_nodie_hypertrial_auc.keras')
+    encoder_path = os.path.join(BASE_DIR, 'model/full_label_encoder.pkl')
+    scaler_path = os.path.join(BASE_DIR, 'model/full_age_scaler.pkl')
     icd_data_path = os.path.join(BASE_DIR, 'data/icd10_codes.json')
 
-    model = load_model(model_path)
+    print("Loading models...")
+    model_readmit = load_model(readmit_model_path)
+    print(f"  Readmission model loaded: {model_readmit.name}")
+
+    model_mortality = load_model(mortality_model_path)
+    print(f"  Mortality model loaded: {model_mortality.name}")
+
     with open(encoder_path, 'rb') as file:
         encoder = pickle.load(file)
+    print(f"  ICD encoder loaded: {len(encoder.classes_)} unique codes")
+
     with open(scaler_path, 'rb') as file:
         age_scaler = pickle.load(file)
+    print(f"  Age scaler loaded")
 
     # Load ICD-10 codes
     with open(icd_data_path, 'r', encoding='utf-8') as file:
         icd_codes = json.load(file)
-    print(f"Loaded {len(icd_codes)} ICD-10 codes")
+    print(f"  ICD-10 search database loaded: {len(icd_codes)} codes")
 
 except FileNotFoundError as e:
     raise RuntimeError(f"Model or preprocessing files not found. Looked in {os.path.join(BASE_DIR, 'model')}") from e
@@ -173,7 +187,7 @@ class PatientData(BaseModel):
     female: int = Field(..., ge=0, le=1, description="Patient's gender (0 for male, 1 for female).")
     pay1: int = Field(..., ge=1, le=6, description="Primary payer information (1-6).")
     zipinc_qrtl: int = Field(..., ge=1, le=4, description="ZIP code income quartile (1-4).")
-    icd_codes: list[str] = Field(..., min_length=1, max_length=35, description="List of ICD-10 diagnosis codes.")
+    icd_codes: list[str] = Field(..., min_length=1, max_length=40, description="List of ICD-10 diagnosis codes.")
 
 
 def get_risk_interpretation(prediction: float) -> str:
@@ -232,24 +246,25 @@ def read_root():
 @app.post("/predict/")
 async def predict(data: PatientData):
     """
-    Predicts the 30-day readmission risk for a patient.
+    Predicts both 30-day mortality and readmission risk for a patient.
 
     Args:
         data (PatientData): The patient's data.
 
     Returns:
-        dict: A dictionary containing the prediction, confidence interval, and interpretation.
+        dict: A dictionary containing predictions for both mortality and readmission.
     """
     try:
         # 1. Create a DataFrame from the input data
         input_data = {
             'AGE': [data.age],
             'FEMALE': [data.female],
-            'PAY1': [data.pay1],
-            'ZIPINC_QRTL': [data.zipinc_qrtl]
+            'PAY1': [float(data.pay1)],  # Convert to float for consistency with training
+            'ZIPINC_QRTL': [float(data.zipinc_qrtl)]
         }
 
-        for i in range(35):
+        # Add up to 40 ICD codes
+        for i in range(40):
             if i < len(data.icd_codes):
                 input_data[f'I10_DX{i+1}'] = [data.icd_codes[i]]
             else:
@@ -259,24 +274,30 @@ async def predict(data: PatientData):
 
         # 2. Preprocess the data
         label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
-        unknown_label_int = 0
-        icd_columns = [f'I10_DX{i}' for i in range(1, 36)]
+        # Find the index for "NAN" or unknown codes
+        unknown_label_int = encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
+
+        icd_columns = [f'I10_DX{i}' for i in range(1, 41)]
 
         for col in icd_columns:
             df[col] = df[col].astype(str).str.upper()
             df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
 
         df['AGE'] = age_scaler.transform(df[['AGE']])
+
+        # One-hot encode with float suffix (matching training format)
         df = pd.get_dummies(df, columns=['PAY1', 'ZIPINC_QRTL'], prefix=['PAY1', 'ZIPINC_QRTL'])
 
-        pay1_columns = [f'PAY1_{i}' for i in range(1, 7)]
-        zipinc_qrtl_columns = [f'ZIPINC_QRTL_{i}' for i in range(1, 5)]
-        expected_columns = pay1_columns + zipinc_qrtl_columns
-        for col in expected_columns:
+        # Expected columns with .0 suffix
+        pay1_columns = [f'PAY1_{float(i)}' for i in range(1, 7)]
+        zipinc_qrtl_columns = [f'ZIPINC_QRTL_{float(i)}' for i in range(1, 5)]
+
+        # Add missing columns with zeros
+        for col in pay1_columns + zipinc_qrtl_columns:
             if col not in df.columns:
                 df[col] = 0
 
-        # 3. Prepare input for the model
+        # 3. Prepare input for the models
         X_new = df[['AGE', 'FEMALE'] + pay1_columns + zipinc_qrtl_columns + icd_columns]
         X_new = X_new.astype('float32')
 
@@ -287,17 +308,28 @@ async def predict(data: PatientData):
         ] + [X_new[col].values for col in pay1_columns] \
           + [X_new[col].values for col in zipinc_qrtl_columns]
 
-        # 4. Make prediction
-        prediction_prob = model.predict(batch_inputs, verbose=0).flatten()[0]
+        # 4. Make predictions with both models
+        readmission_prob = model_readmit.predict(batch_inputs, verbose=0).flatten()[0]
+        mortality_prob = model_mortality.predict(batch_inputs, verbose=0).flatten()[0]
 
-        # 5. Calculate confidence interval and interpretation
-        lower_ci, upper_ci = calculate_prediction_ci(model, batch_inputs)
-        interpretation = get_risk_interpretation(prediction_prob)
+        # 5. Calculate confidence intervals and interpretations
+        readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
+        mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
+
+        readmission_interpretation = get_risk_interpretation(readmission_prob)
+        mortality_interpretation = get_risk_interpretation(mortality_prob)
 
         return {
-            "prediction": float(prediction_prob),
-            "confidence_interval": [float(lower_ci), float(upper_ci)],
-            "interpretation": interpretation,
+            "readmission": {
+                "prediction": float(readmission_prob),
+                "confidence_interval": [float(readmission_lower_ci), float(readmission_upper_ci)],
+                "interpretation": readmission_interpretation,
+            },
+            "mortality": {
+                "prediction": float(mortality_prob),
+                "confidence_interval": [float(mortality_lower_ci), float(mortality_upper_ci)],
+                "interpretation": mortality_interpretation,
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -356,20 +388,127 @@ async def search_icd(q: str, limit: int = 50):
 
     return results
 
-@app.post("/upload_icd_file/", response_model=List[str])
+def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
+    """
+    Flexibly parse ICD codes from text supporting multiple formats.
+
+    Supports:
+    - Comma-separated: I10, E11.9, J44.0
+    - Space-separated: I10 E11.9 J44.0
+    - Newline-separated: one per line
+    - Tab-separated
+    - Mixed formats
+
+    Args:
+        text: Input text containing ICD codes
+        max_codes: Maximum number of codes to accept (default: 35)
+
+    Returns:
+        Dictionary with:
+        - valid_codes: List of valid ICD codes
+        - invalid_codes: List of codes not found in database with suggestions
+        - warnings: List of warning messages
+    """
+    # Replace common separators with spaces
+    cleaned_text = text.replace(',', ' ').replace('\n', ' ').replace('\t', ' ').replace(';', ' ')
+
+    # Split on whitespace and clean up
+    potential_codes = [code.strip().upper() for code in cleaned_text.split() if code.strip()]
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_codes = []
+    for code in potential_codes:
+        if code not in seen:
+            seen.add(code)
+            unique_codes.append(code)
+
+    # Validate against ICD database
+    valid_codes = []
+    invalid_codes = []
+    warnings = []
+
+    for code in unique_codes[:max_codes]:  # Limit to max_codes
+        if code in icd_codes:
+            valid_codes.append(code)
+        else:
+            # Try to find similar codes
+            suggestions = []
+            code_lower = code.lower()
+            for icd_code in list(icd_codes.keys())[:1000]:  # Check first 1000 for performance
+                if icd_code.lower().startswith(code_lower[:3]):
+                    suggestions.append(icd_code)
+                if len(suggestions) >= 3:
+                    break
+
+            invalid_codes.append({
+                "code": code,
+                "suggestions": suggestions[:3]
+            })
+
+    if len(unique_codes) > max_codes:
+        warnings.append(f"Only the first {max_codes} codes were processed. {len(unique_codes) - max_codes} codes were ignored.")
+
+    if len(potential_codes) != len(unique_codes):
+        warnings.append(f"Removed {len(potential_codes) - len(unique_codes)} duplicate codes.")
+
+    return {
+        "valid_codes": valid_codes,
+        "invalid_codes": invalid_codes,
+        "warnings": warnings,
+        "total_found": len(unique_codes)
+    }
+
+
+@app.post("/parse_icd_codes/")
+async def parse_icd_codes(data: dict):
+    """
+    Parse ICD codes from pasted text with flexible format support.
+
+    Accepts text in various formats (comma, space, newline separated) and
+    validates against the ICD-10 database.
+
+    Args:
+        data: Dictionary with 'text' field containing ICD codes
+
+    Returns:
+        Parsed and validated ICD codes with validation results
+    """
+    text = data.get('text', '')
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="No text provided")
+
+    result = parse_icd_codes_from_text(text)
+    return result
+
+
+@app.post("/upload_icd_file/")
 async def upload_icd_file(file: UploadFile = File(...)):
     """
-    Uploads a file containing ICD codes and returns a list of codes.
-    The file is expected to have one ICD code per line.
+    Uploads a file containing ICD codes and returns parsed, validated codes.
+
+    Supports flexible formats:
+    - One code per line
+    - Comma-separated
+    - Space-separated
+    - Mixed formats
+
+    Accepts file types: .txt, .csv
     """
-    if not file.content_type in ["text/csv", "text/plain", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]:
-        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV, TXT, or XLSX file.")
+    if file.content_type not in ["text/csv", "text/plain", "text/x-csv", "application/csv"]:
+        # Be more lenient - check file extension if content type is weird
+        if not file.filename.endswith(('.txt', '.csv')):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file type. Please upload a TXT or CSV file."
+            )
 
     try:
         contents = await file.read()
-        lines = contents.decode('utf-8').splitlines()
-        # Strip whitespace and remove empty lines
-        icd_codes = [line.strip() for line in lines if line.strip()]
-        return icd_codes
+        text = contents.decode('utf-8')
+        result = parse_icd_codes_from_text(text)
+        return result
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File encoding not supported. Please use UTF-8 text files.")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"There was an error processing the file: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
