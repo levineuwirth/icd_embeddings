@@ -14,29 +14,7 @@ This project is organized as a monorepo, with the frontend and backend code in s
 
 This application is designed to be deployed as two separate services: a backend web service and a frontend static site.
 
-### Backend Deployment (Render)
-
-1.  **Create a new Web Service on Render.**
-2.  **Connect your repository.**
-3.  **Configure the service:**
-    *   **Name:** `icd-prediction-backend` (or your preferred name)
-    *   **Environment:** Docker
-    *   **Dockerfile Path:** `./Dockerfile` (from the root of the repo)
-    *   **Port:** `8000`
-4.  **Deploy.**
-
-### Frontend Deployment (Render)
-
-1.  **Create a new Static Site on Render.**
-2.  **Connect the same repository.**
-3.  **Configure the service:**
-    *   **Name:** `icd-prediction-frontend` (or your preferred name)
-    *   **Build Command:** `npm install && npm run build`
-    *   **Publish Directory:** `dist`
-4.  **Add an environment variable:**
-    *   **Key:** `VITE_API_BASE_URL`
-    *   **Value:** The URL of your deployed backend service (e.g., `https://icd-prediction-backend.onrender.com`).
-5.  **Deploy.**
+TODO: provide more detailed information!
 
 ## Development
 
