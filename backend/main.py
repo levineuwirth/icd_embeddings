@@ -12,7 +12,7 @@ from typing import List, Dict
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -223,11 +223,28 @@ class PatientData(BaseModel):
     """
     Pydantic model for validating patient data input.
     """
-    age: int = Field(..., gt=0, description="Patient's age must be greater than 0.")
+    age: int = Field(..., ge=0, description="Patient's age must be 0 or greater.")
     female: int = Field(..., ge=0, le=1, description="Patient's gender (0 for male, 1 for female).")
     pay1: int = Field(..., ge=1, le=6, description="Primary payer information (1-6).")
     zipinc_qrtl: int = Field(..., ge=1, le=4, description="ZIP code income quartile (1-4).")
     icd_codes: list[str] = Field(..., min_length=1, max_length=40, description="List of ICD-10 diagnosis codes.")
+
+    @field_validator('age')
+    @classmethod
+    def validate_age(cls, v):
+        """
+        Validate age according to dataset constraints:
+        - Age cannot be less than 0
+        - Ages 90-124 are capped at 90 (dataset lumps these together)
+        - Ages 125+ are rejected
+        """
+        if v < 0:
+            raise ValueError("Age cannot be less than 0.")
+        if v >= 125:
+            raise ValueError("Age cannot be 125 or greater.")
+        if 90 <= v <= 124:
+            return 90
+        return v
 
 
 def get_risk_interpretation(prediction: float) -> str:

@@ -21,6 +21,8 @@ const OutcomeCalculator = () => {
 
   const [icdSearchResults, setIcdSearchResults] = useState([]);
   const [validationResults, setValidationResults] = useState(null);
+  const [ageError, setAgeError] = useState('');
+  const [ageWarning, setAgeWarning] = useState('');
 
   const primaryPayerOptions = [
     'Medicare',
@@ -31,11 +33,48 @@ const OutcomeCalculator = () => {
     'Other'
   ];
 
+  const validateAge = (age) => {
+    const ageNum = parseInt(age);
+
+    if (age === '' || isNaN(ageNum)) {
+      setAgeError('');
+      setAgeWarning('');
+      return { valid: false, error: '' };
+    }
+
+    if (ageNum < 0) {
+      setAgeError('Age cannot be less than 0.');
+      setAgeWarning('');
+      return { valid: false, error: 'Age cannot be less than 0.' };
+    }
+
+    if (ageNum >= 125) {
+      setAgeError('Age cannot be 125 or greater.');
+      setAgeWarning('');
+      return { valid: false, error: 'Age cannot be 125 or greater.' };
+    }
+
+    if (ageNum >= 90 && ageNum <= 124) {
+      setAgeError('');
+      setAgeWarning('Ages 90-124 will be submitted as 90 (dataset constraint).');
+      return { valid: true, adjustedAge: 90 };
+    }
+
+    setAgeError('');
+    setAgeWarning('');
+    return { valid: true, adjustedAge: ageNum };
+  };
+
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
+
+    // Validate age whenever it changes
+    if (field === 'age') {
+      validateAge(value);
+    }
   };
 
   const handleIcdCodeChange = async (index, value) => {
@@ -152,6 +191,17 @@ const OutcomeCalculator = () => {
   const calculateRisk = async () => {
     const { age, gender, primaryPayer, householdIncome, icdCodes } = formData;
 
+    // Validate age before submitting
+    const ageValidation = validateAge(age);
+    if (!ageValidation.valid) {
+      if (ageValidation.error) {
+        alert(`Invalid age: ${ageValidation.error}`);
+      } else {
+        alert('Please enter a valid age.');
+      }
+      return;
+    }
+
     const pay1Mapping = {
       'Medicare': 1,
       'Medicaid': 2,
@@ -162,7 +212,7 @@ const OutcomeCalculator = () => {
     };
 
     const payload = {
-      age: parseInt(age),
+      age: ageValidation.adjustedAge,
       female: gender === 'F' ? 1 : 0,
       pay1: pay1Mapping[primaryPayer],
       zipinc_qrtl: parseInt(householdIncome),
@@ -203,13 +253,26 @@ const OutcomeCalculator = () => {
             {/* Age */}
             <div className="form-row">
               <label className="form-label">Age:</label>
-              <input
-                type="number"
-                placeholder="years"
-                className="form-input"
-                value={formData.age}
-                onChange={(e) => handleInputChange('age', e.target.value)}
-              />
+              <div style={{ flex: 1 }}>
+                <input
+                  type="number"
+                  placeholder="years"
+                  className="form-input"
+                  value={formData.age}
+                  onChange={(e) => handleInputChange('age', e.target.value)}
+                  style={ageError ? { borderColor: 'red' } : {}}
+                />
+                {ageError && (
+                  <div style={{ color: 'red', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+                    {ageError}
+                  </div>
+                )}
+                {ageWarning && !ageError && (
+                  <div style={{ color: 'orange', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+                    {ageWarning}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Gender */}
