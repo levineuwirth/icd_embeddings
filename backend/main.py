@@ -8,7 +8,7 @@ It includes endpoints for making predictions and searching for ICD codes.
 import pickle
 import os
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -247,6 +247,37 @@ class PatientData(BaseModel):
         return v
 
 
+class PatientDataFlex(BaseModel):
+    """
+    Pydantic model for validating patient data with optional demographic fields.
+    Used for flexible prediction endpoint that can handle incomplete demographic data.
+    """
+    age: Optional[int] = Field(None, description="Patient's age (optional).")
+    female: Optional[int] = Field(None, ge=0, le=1, description="Patient's gender (0 for male, 1 for female) (optional).")
+    pay1: Optional[int] = Field(None, ge=1, le=6, description="Primary payer information (1-6) (optional).")
+    zipinc_qrtl: Optional[int] = Field(None, ge=1, le=4, description="ZIP code income quartile (1-4) (optional).")
+    icd_codes: list[str] = Field(..., min_length=1, max_length=40, description="List of ICD-10 diagnosis codes (required).")
+
+    @field_validator('age')
+    @classmethod
+    def validate_age(cls, v):
+        """
+        Validate age according to dataset constraints (when provided):
+        - Age cannot be less than 0
+        - Ages 90-124 are capped at 90 (dataset lumps these together)
+        - Ages 125+ are rejected
+        """
+        if v is None:
+            return v
+        if v < 0:
+            raise ValueError("Age cannot be less than 0.")
+        if v >= 125:
+            raise ValueError("Age cannot be 125 or greater.")
+        if 90 <= v <= 124:
+            return 90
+        return v
+
+
 def get_risk_interpretation(prediction: float) -> str:
     """
     Provides a brief interpretation of the prediction risk.
@@ -388,6 +419,146 @@ async def predict(data: PatientData):
                 "interpretation": mortality_interpretation,
             }
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def predict_icd_only(icd_codes: list[str]) -> dict:
+    """
+    Placeholder function for ICD-only model prediction.
+    This will be replaced with the actual ICD-only model once it's trained.
+
+    Args:
+        icd_codes: List of ICD-10 diagnosis codes.
+
+    Returns:
+        dict: Prediction results for readmission and mortality.
+    """
+    # PLACEHOLDER: Return mock predictions
+    # TODO: Replace with actual ICD-only model prediction
+    return {
+        "readmission": {
+            "prediction": 0.25,
+            "confidence_interval": [0.20, 0.30],
+            "interpretation": "Moderate risk of 30-day readmission. Clinical discretion is advised.",
+            "model_used": "icd_only_placeholder"
+        },
+        "mortality": {
+            "prediction": 0.15,
+            "confidence_interval": [0.10, 0.20],
+            "interpretation": "Low risk of 30-day readmission.",
+            "model_used": "icd_only_placeholder"
+        }
+    }
+
+
+@app.post("/predict_flex/")
+async def predict_flex(data: PatientDataFlex):
+    """
+    Flexible prediction endpoint that routes to appropriate model based on available data.
+
+    - If ALL demographic data is provided (age, gender, pay1, zipinc_qrtl): uses full demographic model
+    - If ANY demographic data is missing: uses ICD-only model (placeholder for now)
+
+    Args:
+        data (PatientDataFlex): Patient data with optional demographic fields.
+
+    Returns:
+        dict: Predictions with metadata about which model was used.
+    """
+    try:
+        # Check if all demographic data is present
+        has_all_demographics = all([
+            data.age is not None,
+            data.female is not None,
+            data.pay1 is not None,
+            data.zipinc_qrtl is not None
+        ])
+
+        if has_all_demographics:
+            # Use the full demographic model (existing logic)
+            # 1. Create a DataFrame from the input data
+            input_data = {
+                'AGE': [data.age],
+                'FEMALE': [data.female],
+                'PAY1': [float(data.pay1)],
+                'ZIPINC_QRTL': [float(data.zipinc_qrtl)]
+            }
+
+            # Add up to 40 ICD codes
+            for i in range(40):
+                if i < len(data.icd_codes):
+                    input_data[f'I10_DX{i+1}'] = [data.icd_codes[i]]
+                else:
+                    input_data[f'I10_DX{i+1}'] = ['']
+
+            df = pd.DataFrame(input_data)
+
+            # 2. Preprocess the data
+            label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
+            unknown_label_int = encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
+
+            icd_columns = [f'I10_DX{i}' for i in range(1, 41)]
+
+            for col in icd_columns:
+                df[col] = df[col].astype(str).str.upper()
+                df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
+
+            df['AGE'] = age_scaler.transform(df[['AGE']])
+
+            # One-hot encode with float suffix
+            df = pd.get_dummies(df, columns=['PAY1', 'ZIPINC_QRTL'], prefix=['PAY1', 'ZIPINC_QRTL'])
+
+            # Expected columns with .0 suffix
+            pay1_columns = [f'PAY1_{float(i)}' for i in range(1, 7)]
+            zipinc_qrtl_columns = [f'ZIPINC_QRTL_{float(i)}' for i in range(1, 5)]
+
+            # Add missing columns with zeros
+            for col in pay1_columns + zipinc_qrtl_columns:
+                if col not in df.columns:
+                    df[col] = 0
+
+            # 3. Prepare input for the models
+            X_new = df[['AGE', 'FEMALE'] + pay1_columns + zipinc_qrtl_columns + icd_columns]
+            X_new = X_new.astype('float32')
+
+            batch_inputs = [
+                X_new[icd_columns],
+                X_new['AGE'].values,
+                X_new['FEMALE'].values,
+            ] + [X_new[col].values for col in pay1_columns] \
+              + [X_new[col].values for col in zipinc_qrtl_columns]
+
+            # 4. Make predictions with both models
+            readmission_prob = model_readmit.predict(batch_inputs, verbose=0).flatten()[0]
+            mortality_prob = model_mortality.predict(batch_inputs, verbose=0).flatten()[0]
+
+            # 5. Calculate confidence intervals and interpretations
+            readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
+            mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
+
+            readmission_interpretation = get_risk_interpretation(readmission_prob)
+            mortality_interpretation = get_risk_interpretation(mortality_prob)
+
+            return {
+                "readmission": {
+                    "prediction": float(readmission_prob),
+                    "confidence_interval": [float(readmission_lower_ci), float(readmission_upper_ci)],
+                    "interpretation": readmission_interpretation,
+                    "model_used": "full_demographic"
+                },
+                "mortality": {
+                    "prediction": float(mortality_prob),
+                    "confidence_interval": [float(mortality_lower_ci), float(mortality_upper_ci)],
+                    "interpretation": mortality_interpretation,
+                    "model_used": "full_demographic"
+                }
+            }
+        else:
+            # Use ICD-only model (placeholder for now)
+            result = predict_icd_only(data.icd_codes)
+            return result
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

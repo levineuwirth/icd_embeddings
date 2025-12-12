@@ -16,7 +16,8 @@ const OutcomeCalculator = () => {
 
   const [results, setResults] = useState({
     mortality30: '',
-    readmission30: ''
+    readmission30: '',
+    modelUsed: null
   });
 
   const [icdSearchResults, setIcdSearchResults] = useState([]);
@@ -191,44 +192,73 @@ const OutcomeCalculator = () => {
   const calculateRisk = async () => {
     const { age, gender, primaryPayer, householdIncome, icdCodes } = formData;
 
-    // Validate age before submitting
-    const ageValidation = validateAge(age);
-    if (!ageValidation.valid) {
-      if (ageValidation.error) {
-        alert(`Invalid age: ${ageValidation.error}`);
-      } else {
-        alert('Please enter a valid age.');
-      }
-      return;
-    }
-
-    const pay1Mapping = {
-      'Medicare': 1,
-      'Medicaid': 2,
-      'Private Insurance': 3,
-      'Self-Pay': 4,
-      'Workers Compensation': 5,
-      'Other': 6
-    };
-
+    // Build payload with optional demographic fields
     const payload = {
-      age: ageValidation.adjustedAge,
-      female: gender === 'F' ? 1 : 0,
-      pay1: pay1Mapping[primaryPayer],
-      zipinc_qrtl: parseInt(householdIncome),
       icd_codes: icdCodes.filter(code => code.trim() !== '')
     };
 
+    // Validate and add age if provided
+    if (age && age.trim() !== '') {
+      const ageValidation = validateAge(age);
+      if (!ageValidation.valid) {
+        if (ageValidation.error) {
+          alert(`Invalid age: ${ageValidation.error}`);
+        } else {
+          alert('Please enter a valid age.');
+        }
+        return;
+      }
+      payload.age = ageValidation.adjustedAge;
+    }
+
+    // Add gender if provided
+    if (gender) {
+      payload.female = gender === 'F' ? 1 : 0;
+    }
+
+    // Add primary payer if provided
+    if (primaryPayer) {
+      const pay1Mapping = {
+        'Medicare': 1,
+        'Medicaid': 2,
+        'Private Insurance': 3,
+        'Self-Pay': 4,
+        'Workers Compensation': 5,
+        'Other': 6
+      };
+      payload.pay1 = pay1Mapping[primaryPayer];
+    }
+
+    // Add household income if provided
+    if (householdIncome) {
+      payload.zipinc_qrtl = parseInt(householdIncome);
+    }
+
+    // Check if ICD codes are provided
+    if (payload.icd_codes.length === 0) {
+      alert('Please provide at least one valid ICD code.');
+      return;
+    }
+
     try {
-      const response = await axios.post(`${API_URL}/predict/`, payload);
+      const response = await axios.post(`${API_URL}/predict_flex/`, payload);
       const { readmission, mortality } = response.data;
+
+      // Store which model was used
+      const modelUsed = readmission.model_used || 'unknown';
+
       setResults({
         readmission30: `${(readmission.prediction * 100).toFixed(1)}%`,
-        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`
+        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`,
+        modelUsed: modelUsed
       });
     } catch (error) {
       console.error("Error calculating risk:", error);
-      alert("There was an error calculating the risk. Please check the inputs and try again.");
+      if (error.response && error.response.data && error.response.data.detail) {
+        alert(`Error: ${error.response.data.detail}`);
+      } else {
+        alert("There was an error calculating the risk. Please check the inputs and try again.");
+      }
     }
   };
 
@@ -248,11 +278,14 @@ const OutcomeCalculator = () => {
         {/* Input Side */}
         <div className="input-panel">
           <h2 className="panel-title">Enter the following data:</h2>
-          
+          <p style={{ fontSize: '0.875rem', color: '#666', marginBottom: '1rem' }}>
+            All demographic fields are optional. For best accuracy, provide all fields. ICD codes are required.
+          </p>
+
           <div className="form-container">
             {/* Age */}
             <div className="form-row">
-              <label className="form-label">Age:</label>
+              <label className="form-label">Age <span style={{ fontSize: '0.75rem', color: '#999' }}>(optional)</span>:</label>
               <div style={{ flex: 1 }}>
                 <input
                   type="number"
@@ -277,17 +310,17 @@ const OutcomeCalculator = () => {
 
             {/* Gender */}
             <div className="form-row">
-              <label className="form-label">Gender:</label>
+              <label className="form-label">Gender <span style={{ fontSize: '0.75rem', color: '#999' }}>(optional)</span>:</label>
               <div className="button-group">
                 <button
                   className={`toggle-button ${formData.gender === 'M' ? 'active' : ''}`}
-                  onClick={() => handleInputChange('gender', 'M')}
+                  onClick={() => handleInputChange('gender', formData.gender === 'M' ? '' : 'M')}
                 >
                   M
                 </button>
                 <button
                   className={`toggle-button ${formData.gender === 'F' ? 'active' : ''}`}
-                  onClick={() => handleInputChange('gender', 'F')}
+                  onClick={() => handleInputChange('gender', formData.gender === 'F' ? '' : 'F')}
                 >
                   F
                 </button>
@@ -296,7 +329,7 @@ const OutcomeCalculator = () => {
 
             {/* Expected Primary Payer */}
             <div className="form-row">
-              <label className="form-label">Expected Primary Payer:</label>
+              <label className="form-label">Expected Primary Payer <span style={{ fontSize: '0.75rem', color: '#999' }}>(optional)</span>:</label>
               <select
                 className="form-select"
                 value={formData.primaryPayer}
@@ -311,13 +344,13 @@ const OutcomeCalculator = () => {
 
             {/* Household Income Quartile */}
             <div className="form-row">
-              <label className="form-label">Household Income Quartile:</label>
+              <label className="form-label">Household Income Quartile <span style={{ fontSize: '0.75rem', color: '#999' }}>(optional)</span>:</label>
               <div className="button-group">
                 {[1, 2, 3, 4].map(quartile => (
                   <button
                     key={quartile}
                     className={`toggle-button ${formData.householdIncome === quartile.toString() ? 'active' : ''}`}
-                    onClick={() => handleInputChange('householdIncome', quartile.toString())}
+                    onClick={() => handleInputChange('householdIncome', formData.householdIncome === quartile.toString() ? '' : quartile.toString())}
                   >
                     {quartile}
                   </button>
@@ -530,6 +563,20 @@ const OutcomeCalculator = () => {
                 />
               </div>
             </div>
+
+            {results.modelUsed && (
+              <div style={{
+                marginTop: '1rem',
+                padding: '0.75rem',
+                backgroundColor: results.modelUsed === 'full_demographic' ? '#e8f5e9' : '#fff3e0',
+                borderRadius: '4px',
+                fontSize: '0.875rem'
+              }}>
+                <strong>Model used:</strong> {results.modelUsed === 'full_demographic'
+                  ? 'Full Demographic Model (all fields provided)'
+                  : 'ICD-Only Model (incomplete demographics)'}
+              </div>
+            )}
           </div>
 
           <div className="description">
