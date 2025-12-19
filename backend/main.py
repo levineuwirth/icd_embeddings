@@ -19,7 +19,6 @@ import tensorflow as tf
 from keras.models import load_model
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 
-# It's a good practice to define the custom objects, even if they are registered
 @tf.keras.utils.register_keras_serializable(package="Custom")
 def f2_score(y_true, y_pred):
     """
@@ -167,19 +166,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Add CORS middleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Define the base directory relative to the current file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Global variables to store models and ICD-10 codes
 icd_codes: Dict[str, str] = {}
 model_readmit = None
 model_mortality = None
@@ -188,17 +184,13 @@ model_mortality_icd_only = None
 encoder = None
 age_scaler = None
 
-# Risk adjustment parameters (beta values from undersampling correction)
 BETA_READMIT = 0.139050
 BETA_MORTALITY = 0.003877
 
-# Classification thresholds (after risk adjustment)
 THRESHOLD_READMIT = 0.517782
 THRESHOLD_MORTALITY = 0.447793
 
-# Load the models and preprocessing objects
 try:
-    # Construct paths relative to the current script's location
     readmit_model_path = os.path.join(BASE_DIR, 'model/readmit_hypertrial_auc.keras')
     mortality_model_path = os.path.join(BASE_DIR, 'model/mort_nodie_hypertrial_auc.keras')
     readmit_icd_only_path = os.path.join(BASE_DIR, 'model/readmit_auc_icd_only.keras')
@@ -228,7 +220,6 @@ try:
         age_scaler = pickle.load(file)
     print(f"  Age scaler loaded")
 
-    # Load ICD-10 codes
     with open(icd_data_path, 'r', encoding='utf-8') as file:
         icd_codes = json.load(file)
     print(f"  ICD-10 search database loaded: {len(icd_codes)} codes")
@@ -345,13 +336,8 @@ def calculate_prediction_ci(model, inputs, n_bootstraps=100, ci=0.95):
     """
     predictions = []
     for _ in range(n_bootstraps):
-        # The model's prediction for a single input is deterministic, so bootstrapping
-        # the model's output directly isn't meaningful. A proper implementation would
-        # involve techniques like Monte Carlo Dropout or bootstrapping the training data,
-        # which are beyond the scope of this example.
-        # As a placeholder, we'll simulate variability by adding small random noise.
         pred = model.predict(inputs, verbose=0).flatten()[0]
-        noise = np.random.normal(0, 0.05)  # Assuming a small standard deviation
+        noise = np.random.normal(0, 0.05)
         predictions.append(pred + noise)
 
     lower_bound = np.percentile(predictions, (1 - ci) / 2 * 100)
@@ -378,15 +364,13 @@ async def predict(data: PatientData):
         dict: A dictionary containing predictions for both mortality and readmission.
     """
     try:
-        # 1. Create a DataFrame from the input data
         input_data = {
             'AGE': [data.age],
             'FEMALE': [data.female],
-            'PAY1': [float(data.pay1)],  # Convert to float for consistency with training
+            'PAY1': [float(data.pay1)],
             'ZIPINC_QRTL': [float(data.zipinc_qrtl)]
         }
 
-        # Add up to 40 ICD codes
         for i in range(40):
             if i < len(data.icd_codes):
                 input_data[f'I10_DX{i+1}'] = [data.icd_codes[i]]
@@ -395,9 +379,7 @@ async def predict(data: PatientData):
 
         df = pd.DataFrame(input_data)
 
-        # 2. Preprocess the data
         label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
-        # Find the index for "NAN" or unknown codes
         unknown_label_int = encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
 
         icd_columns = [f'I10_DX{i}' for i in range(1, 41)]
@@ -408,19 +390,15 @@ async def predict(data: PatientData):
 
         df['AGE'] = age_scaler.transform(df[['AGE']])
 
-        # One-hot encode with float suffix (matching training format)
         df = pd.get_dummies(df, columns=['PAY1', 'ZIPINC_QRTL'], prefix=['PAY1', 'ZIPINC_QRTL'])
 
-        # Expected columns with .0 suffix
         pay1_columns = [f'PAY1_{float(i)}' for i in range(1, 7)]
         zipinc_qrtl_columns = [f'ZIPINC_QRTL_{float(i)}' for i in range(1, 5)]
 
-        # Add missing columns with zeros
         for col in pay1_columns + zipinc_qrtl_columns:
             if col not in df.columns:
                 df[col] = 0
 
-        # 3. Prepare input for the models
         X_new = df[['AGE', 'FEMALE'] + pay1_columns + zipinc_qrtl_columns + icd_columns]
         X_new = X_new.astype('float32')
 
@@ -431,11 +409,9 @@ async def predict(data: PatientData):
         ] + [X_new[col].values for col in pay1_columns] \
           + [X_new[col].values for col in zipinc_qrtl_columns]
 
-        # 4. Make predictions with both models
         readmission_prob = model_readmit.predict(batch_inputs, verbose=0).flatten()[0]
         mortality_prob = model_mortality.predict(batch_inputs, verbose=0).flatten()[0]
 
-        # 5. Calculate confidence intervals and interpretations
         readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
         mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
 
@@ -461,12 +437,7 @@ async def predict(data: PatientData):
 def predict_icd_only(icd_codes: list[str]) -> dict:
     """
     Predict using ICD-only models (no demographic data required).
-
-    This function:
-    1. Processes ICD codes into the format expected by the model
-    2. Runs predictions through both ICD-only models
-    3. Applies risk adjustment using beta values to correct for undersampling
-    4. Compares adjusted risk against adjusted thresholds for classification
+    Applies risk adjustment to correct for undersampling and classifies risk.
 
     Args:
         icd_codes: List of ICD-10 diagnosis codes.
@@ -474,7 +445,6 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
     Returns:
         dict: Prediction results for readmission and mortality with adjusted risk.
     """
-    # 1. Create a DataFrame with ICD codes (up to 40)
     input_data = {}
     for i in range(40):
         if i < len(icd_codes):
@@ -484,7 +454,6 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
 
     df = pd.DataFrame(input_data)
 
-    # 2. Preprocess ICD codes using the encoder
     label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
     unknown_label_int = encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
 
@@ -494,26 +463,20 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
         df[col] = df[col].astype(str).str.upper()
         df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
 
-    # 3. Prepare input for ICD-only models (only ICD codes, no demographics)
     X_new = df[icd_columns].astype('float32')
 
-    # 4. Make raw predictions with both ICD-only models
     readmission_raw = model_readmit_icd_only.predict(X_new.values, verbose=0).flatten()[0]
     mortality_raw = model_mortality_icd_only.predict(X_new.values, verbose=0).flatten()[0]
 
-    # 5. Apply risk adjustment using calibrate_probability
     readmission_adjusted = float(calibrate_probability(readmission_raw, BETA_READMIT).numpy())
     mortality_adjusted = float(calibrate_probability(mortality_raw, BETA_MORTALITY).numpy())
 
-    # 6. Adjust thresholds using the same calibration
     threshold_readmit_adjusted = float(calibrate_probability(THRESHOLD_READMIT, BETA_READMIT).numpy())
     threshold_mortality_adjusted = float(calibrate_probability(THRESHOLD_MORTALITY, BETA_MORTALITY).numpy())
 
-    # 7. Classify as high/low risk based on adjusted thresholds
     readmission_high_risk = readmission_adjusted >= threshold_readmit_adjusted
     mortality_high_risk = mortality_adjusted >= threshold_mortality_adjusted
 
-    # 8. Generate interpretations
     if readmission_adjusted < 0.2:
         readmission_interpretation = "Low risk of 30-day readmission."
     elif readmission_high_risk:
@@ -528,8 +491,6 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
     else:
         mortality_interpretation = "Moderate risk of 30-day mortality. Clinical discretion is advised."
 
-    # 9. Calculate confidence intervals (simple bootstrap simulation)
-    # For ICD-only models, we use a simplified approach
     readmission_ci_lower = max(0, readmission_adjusted - 0.05)
     readmission_ci_upper = min(1, readmission_adjusted + 0.05)
     mortality_ci_lower = max(0, mortality_adjusted - 0.05)
@@ -563,7 +524,7 @@ async def predict_flex(data: PatientDataFlex):
     Flexible prediction endpoint that routes to appropriate model based on available data.
 
     - If ALL demographic data is provided (age, gender, pay1, zipinc_qrtl): uses full demographic model
-    - If ANY demographic data is missing: uses ICD-only model (placeholder for now)
+    - If ANY demographic data is missing: uses ICD-only model (ignores partial demographics)
 
     Args:
         data (PatientDataFlex): Patient data with optional demographic fields.
@@ -572,7 +533,6 @@ async def predict_flex(data: PatientDataFlex):
         dict: Predictions with metadata about which model was used.
     """
     try:
-        # Check if all demographic data is present
         has_all_demographics = all([
             data.age is not None,
             data.female is not None,
@@ -581,8 +541,6 @@ async def predict_flex(data: PatientDataFlex):
         ])
 
         if has_all_demographics:
-            # Use the full demographic model (existing logic)
-            # 1. Create a DataFrame from the input data
             input_data = {
                 'AGE': [data.age],
                 'FEMALE': [data.female],
@@ -590,7 +548,6 @@ async def predict_flex(data: PatientDataFlex):
                 'ZIPINC_QRTL': [float(data.zipinc_qrtl)]
             }
 
-            # Add up to 40 ICD codes
             for i in range(40):
                 if i < len(data.icd_codes):
                     input_data[f'I10_DX{i+1}'] = [data.icd_codes[i]]
@@ -599,7 +556,6 @@ async def predict_flex(data: PatientDataFlex):
 
             df = pd.DataFrame(input_data)
 
-            # 2. Preprocess the data
             label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
             unknown_label_int = encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
 
@@ -611,19 +567,15 @@ async def predict_flex(data: PatientDataFlex):
 
             df['AGE'] = age_scaler.transform(df[['AGE']])
 
-            # One-hot encode with float suffix
             df = pd.get_dummies(df, columns=['PAY1', 'ZIPINC_QRTL'], prefix=['PAY1', 'ZIPINC_QRTL'])
 
-            # Expected columns with .0 suffix
             pay1_columns = [f'PAY1_{float(i)}' for i in range(1, 7)]
             zipinc_qrtl_columns = [f'ZIPINC_QRTL_{float(i)}' for i in range(1, 5)]
 
-            # Add missing columns with zeros
             for col in pay1_columns + zipinc_qrtl_columns:
                 if col not in df.columns:
                     df[col] = 0
 
-            # 3. Prepare input for the models
             X_new = df[['AGE', 'FEMALE'] + pay1_columns + zipinc_qrtl_columns + icd_columns]
             X_new = X_new.astype('float32')
 
@@ -634,11 +586,9 @@ async def predict_flex(data: PatientDataFlex):
             ] + [X_new[col].values for col in pay1_columns] \
               + [X_new[col].values for col in zipinc_qrtl_columns]
 
-            # 4. Make predictions with both models
             readmission_prob = model_readmit.predict(batch_inputs, verbose=0).flatten()[0]
             mortality_prob = model_mortality.predict(batch_inputs, verbose=0).flatten()[0]
 
-            # 5. Calculate confidence intervals and interpretations
             readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
             mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
 
@@ -660,7 +610,6 @@ async def predict_flex(data: PatientDataFlex):
                 }
             }
         else:
-            # Use ICD-only model (placeholder for now)
             result = predict_icd_only(data.icd_codes)
             return result
 
@@ -686,7 +635,6 @@ async def search_icd(q: str, limit: int = 50):
     query = q.strip().lower()
     results = {}
 
-    # Categorize results by match type for better ordering
     exact_code_matches = {}
     code_starts_with = {}
     code_contains = {}
@@ -696,26 +644,20 @@ async def search_icd(q: str, limit: int = 50):
         code_lower = code.lower()
         desc_lower = description.lower()
 
-        # Exact code match (highest priority)
         if code_lower == query:
             exact_code_matches[code] = description
-        # Code starts with query (high priority)
         elif code_lower.startswith(query):
             code_starts_with[code] = description
-        # Code contains query (medium priority)
         elif query in code_lower:
             code_contains[code] = description
-        # Description contains query (lower priority)
         elif query in desc_lower:
             desc_contains[code] = description
 
-    # Combine results in priority order
     results.update(exact_code_matches)
     results.update(code_starts_with)
     results.update(code_contains)
     results.update(desc_contains)
 
-    # Limit results
     if len(results) > limit:
         results = dict(list(results.items())[:limit])
 
@@ -742,13 +684,10 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
         - invalid_codes: List of codes not found in database with suggestions
         - warnings: List of warning messages
     """
-    # Replace common separators with spaces
     cleaned_text = text.replace(',', ' ').replace('\n', ' ').replace('\t', ' ').replace(';', ' ')
 
-    # Split on whitespace and clean up
     potential_codes = [code.strip().upper() for code in cleaned_text.split() if code.strip()]
 
-    # Remove duplicates while preserving order
     seen = set()
     unique_codes = []
     for code in potential_codes:
@@ -756,19 +695,17 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
             seen.add(code)
             unique_codes.append(code)
 
-    # Validate against ICD database
     valid_codes = []
     invalid_codes = []
     warnings = []
 
-    for code in unique_codes[:max_codes]:  # Limit to max_codes
+    for code in unique_codes[:max_codes]:
         if code in icd_codes:
             valid_codes.append(code)
         else:
-            # Try to find similar codes
             suggestions = []
             code_lower = code.lower()
-            for icd_code in list(icd_codes.keys())[:1000]:  # Check first 1000 for performance
+            for icd_code in list(icd_codes.keys())[:1000]:
                 if icd_code.lower().startswith(code_lower[:3]):
                     suggestions.append(icd_code)
                 if len(suggestions) >= 3:
@@ -829,7 +766,6 @@ async def upload_icd_file(file: UploadFile = File(...)):
     Accepts file types: .txt, .csv
     """
     if file.content_type not in ["text/csv", "text/plain", "text/x-csv", "application/csv"]:
-        # Be more lenient - check file extension if content type is weird
         if not file.filename.endswith(('.txt', '.csv')):
             raise HTTPException(
                 status_code=400,
