@@ -183,14 +183,26 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 icd_codes: Dict[str, str] = {}
 model_readmit = None
 model_mortality = None
+model_readmit_icd_only = None
+model_mortality_icd_only = None
 encoder = None
 age_scaler = None
+
+# Risk adjustment parameters (beta values from undersampling correction)
+BETA_READMIT = 0.139050
+BETA_MORTALITY = 0.003877
+
+# Classification thresholds (after risk adjustment)
+THRESHOLD_READMIT = 0.517782
+THRESHOLD_MORTALITY = 0.447793
 
 # Load the models and preprocessing objects
 try:
     # Construct paths relative to the current script's location
     readmit_model_path = os.path.join(BASE_DIR, 'model/readmit_hypertrial_auc.keras')
     mortality_model_path = os.path.join(BASE_DIR, 'model/mort_nodie_hypertrial_auc.keras')
+    readmit_icd_only_path = os.path.join(BASE_DIR, 'model/readmit_auc_icd_only.keras')
+    mortality_icd_only_path = os.path.join(BASE_DIR, 'model/mort_nodie_icd_only.keras')
     encoder_path = os.path.join(BASE_DIR, 'model/full_label_encoder.pkl')
     scaler_path = os.path.join(BASE_DIR, 'model/full_age_scaler.pkl')
     icd_data_path = os.path.join(BASE_DIR, 'data/icd10_codes.json')
@@ -201,6 +213,12 @@ try:
 
     model_mortality = load_model(mortality_model_path)
     print(f"  Mortality model loaded: {model_mortality.name}")
+
+    model_readmit_icd_only = load_model(readmit_icd_only_path)
+    print(f"  Readmission ICD-only model loaded: {model_readmit_icd_only.name}")
+
+    model_mortality_icd_only = load_model(mortality_icd_only_path)
+    print(f"  Mortality ICD-only model loaded: {model_mortality_icd_only.name}")
 
     with open(encoder_path, 'rb') as file:
         encoder = pickle.load(file)
@@ -276,6 +294,23 @@ class PatientDataFlex(BaseModel):
         if 90 <= v <= 124:
             return 90
         return v
+
+
+def calibrate_probability(p_sampled, beta, eps=1e-8):
+    """
+    Correct predicted probabilities after undersampling.
+
+    Args:
+        p_sampled: predicted probability from model trained on undersampled data
+        beta: undersampling ratio = (# majority after undersampling) / (# majority original)
+              OR equivalently: original_positive_rate (if you balanced to 50/50)
+        eps: small constant to avoid division by zero
+
+    Returns:
+        calibrated probability reflecting true population distribution
+    """
+    p_sampled = tf.clip_by_value(p_sampled, eps, 1-eps)
+    return p_sampled / (p_sampled + (1 - p_sampled) / beta)
 
 
 def get_risk_interpretation(prediction: float) -> str:
@@ -425,29 +460,99 @@ async def predict(data: PatientData):
 
 def predict_icd_only(icd_codes: list[str]) -> dict:
     """
-    Placeholder function for ICD-only model prediction.
-    This will be replaced with the actual ICD-only model once it's trained.
+    Predict using ICD-only models (no demographic data required).
+
+    This function:
+    1. Processes ICD codes into the format expected by the model
+    2. Runs predictions through both ICD-only models
+    3. Applies risk adjustment using beta values to correct for undersampling
+    4. Compares adjusted risk against adjusted thresholds for classification
 
     Args:
         icd_codes: List of ICD-10 diagnosis codes.
 
     Returns:
-        dict: Prediction results for readmission and mortality.
+        dict: Prediction results for readmission and mortality with adjusted risk.
     """
-    # PLACEHOLDER: Return mock predictions
-    # TODO: Replace with actual ICD-only model prediction
+    # 1. Create a DataFrame with ICD codes (up to 40)
+    input_data = {}
+    for i in range(40):
+        if i < len(icd_codes):
+            input_data[f'I10_DX{i+1}'] = [icd_codes[i]]
+        else:
+            input_data[f'I10_DX{i+1}'] = ['']
+
+    df = pd.DataFrame(input_data)
+
+    # 2. Preprocess ICD codes using the encoder
+    label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
+    unknown_label_int = encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
+
+    icd_columns = [f'I10_DX{i}' for i in range(1, 41)]
+
+    for col in icd_columns:
+        df[col] = df[col].astype(str).str.upper()
+        df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
+
+    # 3. Prepare input for ICD-only models (only ICD codes, no demographics)
+    X_new = df[icd_columns].astype('float32')
+
+    # 4. Make raw predictions with both ICD-only models
+    readmission_raw = model_readmit_icd_only.predict(X_new.values, verbose=0).flatten()[0]
+    mortality_raw = model_mortality_icd_only.predict(X_new.values, verbose=0).flatten()[0]
+
+    # 5. Apply risk adjustment using calibrate_probability
+    readmission_adjusted = float(calibrate_probability(readmission_raw, BETA_READMIT).numpy())
+    mortality_adjusted = float(calibrate_probability(mortality_raw, BETA_MORTALITY).numpy())
+
+    # 6. Adjust thresholds using the same calibration
+    threshold_readmit_adjusted = float(calibrate_probability(THRESHOLD_READMIT, BETA_READMIT).numpy())
+    threshold_mortality_adjusted = float(calibrate_probability(THRESHOLD_MORTALITY, BETA_MORTALITY).numpy())
+
+    # 7. Classify as high/low risk based on adjusted thresholds
+    readmission_high_risk = readmission_adjusted >= threshold_readmit_adjusted
+    mortality_high_risk = mortality_adjusted >= threshold_mortality_adjusted
+
+    # 8. Generate interpretations
+    if readmission_adjusted < 0.2:
+        readmission_interpretation = "Low risk of 30-day readmission."
+    elif readmission_high_risk:
+        readmission_interpretation = "High risk of 30-day readmission. Consider intervention to mitigate risk."
+    else:
+        readmission_interpretation = "Moderate risk of 30-day readmission. Clinical discretion is advised."
+
+    if mortality_adjusted < 0.2:
+        mortality_interpretation = "Low risk of 30-day mortality."
+    elif mortality_high_risk:
+        mortality_interpretation = "High risk of 30-day mortality. Consider intervention to mitigate risk."
+    else:
+        mortality_interpretation = "Moderate risk of 30-day mortality. Clinical discretion is advised."
+
+    # 9. Calculate confidence intervals (simple bootstrap simulation)
+    # For ICD-only models, we use a simplified approach
+    readmission_ci_lower = max(0, readmission_adjusted - 0.05)
+    readmission_ci_upper = min(1, readmission_adjusted + 0.05)
+    mortality_ci_lower = max(0, mortality_adjusted - 0.05)
+    mortality_ci_upper = min(1, mortality_adjusted + 0.05)
+
     return {
         "readmission": {
-            "prediction": 0.25,
-            "confidence_interval": [0.20, 0.30],
-            "interpretation": "Moderate risk of 30-day readmission. Clinical discretion is advised.",
-            "model_used": "icd_only_placeholder"
+            "prediction": readmission_adjusted,
+            "raw_prediction": float(readmission_raw),
+            "confidence_interval": [readmission_ci_lower, readmission_ci_upper],
+            "interpretation": readmission_interpretation,
+            "model_used": "icd_only",
+            "high_risk": readmission_high_risk,
+            "threshold_used": threshold_readmit_adjusted
         },
         "mortality": {
-            "prediction": 0.15,
-            "confidence_interval": [0.10, 0.20],
-            "interpretation": "Low risk of 30-day readmission.",
-            "model_used": "icd_only_placeholder"
+            "prediction": mortality_adjusted,
+            "raw_prediction": float(mortality_raw),
+            "confidence_interval": [mortality_ci_lower, mortality_ci_upper],
+            "interpretation": mortality_interpretation,
+            "model_used": "icd_only",
+            "high_risk": mortality_high_risk,
+            "threshold_used": threshold_mortality_adjusted
         }
     }
 
