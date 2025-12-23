@@ -8,7 +8,7 @@ const OutcomeCalculator = () => {
     gender: '',
     primaryPayer: '',
     householdIncome: '',
-    icdMethod: 'manual', // user has choice between 'manual', 'paste', or 'upload'
+    icdMethod: 'paste', // user has choice between 'paste' or 'upload'
     icdCodes: ['', '', '', '', ''],
     uploadedFile: null,
     pastedText: ''
@@ -57,7 +57,7 @@ const OutcomeCalculator = () => {
 
     if (ageNum >= 90 && ageNum <= 124) {
       setAgeError('');
-      setAgeWarning('Ages 90-124 will be submitted as 90 (dataset constraint).');
+      setAgeWarning('');
       return { valid: true, adjustedAge: 90 };
     }
 
@@ -367,25 +367,13 @@ const OutcomeCalculator = () => {
                     <input
                       type="radio"
                       name="icdMethod"
-                      checked={formData.icdMethod === 'manual'}
-                      onChange={() => {
-                        handleInputChange('icdMethod', 'manual');
-                        setValidationResults(null);
-                      }}
-                    />
-                    Manual Input
-                  </label>
-                  <label className="radio-label">
-                    <input
-                      type="radio"
-                      name="icdMethod"
                       checked={formData.icdMethod === 'paste'}
                       onChange={() => {
                         handleInputChange('icdMethod', 'paste');
                         setValidationResults(null);
                       }}
                     />
-                    Paste Codes
+                    Manual Input
                   </label>
                   <label className="radio-label">
                     <input
@@ -401,51 +389,7 @@ const OutcomeCalculator = () => {
                   </label>
                 </div>
 
-                {formData.icdMethod === 'manual' ? (
-                  <div className="manual-input-container">
-                    <div className="icd-codes">
-                      {formData.icdCodes.map((code, index) => (
-                        <div key={index} className="icd-code-row">
-                          <input
-                            type="text"
-                            placeholder={`Code ${index + 1}`}
-                            className="icd-input"
-                            value={code}
-                            onChange={(e) => handleIcdCodeChange(index, e.target.value)}
-                          />
-                          {icdSearchResults && Object.keys(icdSearchResults).length > 0 && (
-                            <div className="search-results">
-                              {Object.entries(icdSearchResults).map(([code, desc]) => (
-                                <div
-                                  key={code}
-                                  className="search-result"
-                                  onClick={() => selectIcdCode(index, code)}
-                                >
-                                  {code}: {desc}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {formData.icdCodes.length > 1 && (
-                            <button
-                              onClick={() => deleteIcdCode(index)}
-                              className="delete-icd-button"
-                              title="Delete this ICD code"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      onClick={addMoreCodes}
-                      className="add-more-button"
-                    >
-                      Add More
-                    </button>
-                  </div>
-                ) : formData.icdMethod === 'paste' ? (
+                {formData.icdMethod === 'paste' ? (
                   <div className="paste-container">
                     <p className="instruction-text">
                       Paste ICD codes in any format (comma, space, or line-separated):
