@@ -12,9 +12,9 @@ services:
       - WORKERS=4
     expose:
       - "8000"
-    volumes:
-      # Optional: Mount model directory if you want hot-reload of models
-      # - ./backend/model:/app/model:ro
+    # Uncomment to enable hot-reload of models without rebuilding:
+    # volumes:
+    #   - ./backend/model:/app/model:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 30s
