@@ -40,5 +40,14 @@ RUN cd /app/data && \
 EXPOSE 8000
 
 # Define the command to run the application
-# The host must be 0.0.0.0 to be accessible from outside the container
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Using shell form to allow environment variable expansion
+# Uses gunicorn with uvicorn workers for production multi-process serving
+# ${MODULE_NAME:-main} defaults to "main" if MODULE_NAME not set
+# ${WORKERS:-1} defaults to 1 worker if WORKERS not set
+# --timeout 300 allows ML predictions to complete without worker timeout
+CMD gunicorn -k uvicorn.workers.UvicornWorker ${MODULE_NAME:-main}:app \
+    --bind 0.0.0.0:8000 \
+    --workers ${WORKERS:-1} \
+    --timeout 300 \
+    --access-logfile - \
+    --error-logfile -
