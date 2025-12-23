@@ -507,16 +507,6 @@ const OutcomeCalculator = () => {
             )}
           </div>
 
-          <div className="description">
-            <p className="description-text">
-              This calculator predicts 30-day mortality and 30-day readmission risk using advanced
-              machine learning models trained on ICD-10 diagnosis codes and patient demographics.
-            </p>
-            <p className="disclaimer-italic">
-              **Disclaimer: This tool is for educational and clinical decision support only. Always use clinical judgment and consult appropriate healthcare providers.**
-            </p>
-          </div>
-
           {/* ICD Code Lookup */}
           <div className="icd-lookup-container" style={{
             marginTop: '2rem',
@@ -538,7 +528,7 @@ const OutcomeCalculator = () => {
               color: '#666',
               marginBottom: '1rem'
             }}>
-              Search for ICD codes and click to add them to your manual input above.
+              Search for ICD codes and click to add them to your manual input.
             </p>
             <div style={{ position: 'relative' }}>
               <input
@@ -569,6 +559,17 @@ const OutcomeCalculator = () => {
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="description">
+            <p className="description-text">
+              This calculator predicts 30-day mortality and 30-day readmission risk using advanced
+              machine learning models trained on ICD-10 diagnosis codes and patient demographics.
+              The full model is used when all demographic fields are provided; otherwise, an ICD-only model is used.
+            </p>
+            <p className="disclaimer-italic">
+              **Disclaimer: This tool is for educational and clinical decision support only. Always use clinical judgment and consult appropriate healthcare providers.**
+            </p>
           </div>
         </div>
       </div>
