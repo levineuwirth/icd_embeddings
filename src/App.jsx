@@ -174,11 +174,27 @@ const OutcomeCalculator = () => {
   };
 
   const calculateRisk = async () => {
-    const { age, gender, primaryPayer, householdIncome, icdCodes } = formData;
+    const { age, gender, primaryPayer, householdIncome, icdCodes, icdMethod, pastedText } = formData;
+
+    // Parse pasted text if using paste method
+    let codes = icdCodes;
+    if (icdMethod === 'paste' && pastedText.trim()) {
+      try {
+        const response = await axios.post(`${API_URL}/parse_icd_codes/`, {
+          text: pastedText
+        });
+        codes = response.data.valid_codes;
+        setValidationResults(response.data);
+      } catch (error) {
+        console.error("Error parsing codes:", error);
+        alert("There was an error parsing the pasted codes.");
+        return;
+      }
+    }
 
     // Build payload with optional demographic fields
     const payload = {
-      icd_codes: icdCodes.filter(code => code.trim() !== '')
+      icd_codes: codes.filter(code => code.trim() !== '')
     };
 
     // Validate and add age if provided
@@ -385,12 +401,6 @@ const OutcomeCalculator = () => {
                       onChange={(e) => handlePasteChange(e.target.value)}
                       rows={6}
                     />
-                    <button
-                      onClick={handleParsePastedCodes}
-                      className="parse-button"
-                    >
-                      Parse & Validate Codes
-                    </button>
                   </div>
                 ) : (
                   <div className="upload-container">
