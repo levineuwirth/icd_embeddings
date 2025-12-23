@@ -24,6 +24,8 @@ const OutcomeCalculator = () => {
   const [ageError, setAgeError] = useState('');
   const [ageWarning, setAgeWarning] = useState('');
   const [isCalculating, setIsCalculating] = useState(false);
+  const [icdSearchQuery, setIcdSearchQuery] = useState('');
+  const [icdLookupResults, setIcdLookupResults] = useState([]);
 
   const primaryPayerOptions = [
     'Medicare',
@@ -78,52 +80,34 @@ const OutcomeCalculator = () => {
     }
   };
 
-  const handleIcdCodeChange = async (index, value) => {
-    const newCodes = [...formData.icdCodes];
-    newCodes[index] = value;
-    setFormData(prev => ({
-      ...prev,
-      icdCodes: newCodes
-    }));
+  const handleIcdLookupSearch = async (value) => {
+    setIcdSearchQuery(value);
 
     if (value.length > 2) {
       try {
         const response = await axios.get(`${API_URL}/search_icd/?q=${value}`);
-        setIcdSearchResults(response.data);
+        setIcdLookupResults(response.data);
       } catch (error) {
         console.error("Error searching for ICD codes:", error);
       }
     } else {
-      setIcdSearchResults([]);
+      setIcdLookupResults([]);
     }
   };
 
-  const selectIcdCode = (index, code) => {
-    const newCodes = [...formData.icdCodes];
-    newCodes[index] = code;
-    setFormData(prev => ({
-      ...prev,
-      icdCodes: newCodes
-    }));
-    setIcdSearchResults([]);
-  };
+  const selectIcdFromLookup = (code) => {
+    // Append the code to the pastedText
+    const currentText = formData.pastedText.trim();
+    const newText = currentText ? `${currentText}, ${code}` : code;
 
-  const addMoreCodes = () => {
     setFormData(prev => ({
       ...prev,
-      icdCodes: [...prev.icdCodes, '']
+      pastedText: newText
     }));
-  };
 
-  const deleteIcdCode = (index) => {
-    // does not allow user to have 0 codes
-    if (formData.icdCodes.length <= 1) return;
-    
-    const newCodes = formData.icdCodes.filter((_, i) => i !== index);
-    setFormData(prev => ({
-      ...prev,
-      icdCodes: newCodes
-    }));
+    // Clear the search
+    setIcdSearchQuery('');
+    setIcdLookupResults([]);
   };
 
   const handleFileUpload = async (event) => {
@@ -531,6 +515,60 @@ const OutcomeCalculator = () => {
             <p className="disclaimer-italic">
               **Disclaimer: This tool is for educational and clinical decision support only. Always use clinical judgment and consult appropriate healthcare providers.**
             </p>
+          </div>
+
+          {/* ICD Code Lookup */}
+          <div className="icd-lookup-container" style={{
+            marginTop: '2rem',
+            padding: '1.5rem',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '8px',
+            border: '1px solid #dee2e6'
+          }}>
+            <h3 style={{
+              fontSize: '1.125rem',
+              fontWeight: '600',
+              marginBottom: '1rem',
+              color: '#333'
+            }}>
+              Search ICD-10 Codes
+            </h3>
+            <p style={{
+              fontSize: '0.875rem',
+              color: '#666',
+              marginBottom: '1rem'
+            }}>
+              Search for ICD codes and click to add them to your manual input above.
+            </p>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                placeholder="Search ICD codes (e.g., 'diabetes', 'I10')..."
+                className="form-input"
+                value={icdSearchQuery}
+                onChange={(e) => handleIcdLookupSearch(e.target.value)}
+                style={{ width: '100%' }}
+              />
+              {icdLookupResults && Object.keys(icdLookupResults).length > 0 && (
+                <div className="search-results" style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  zIndex: 1000
+                }}>
+                  {Object.entries(icdLookupResults).map(([code, desc]) => (
+                    <div
+                      key={code}
+                      className="search-result"
+                      onClick={() => selectIcdFromLookup(code)}
+                    >
+                      {code}: {desc}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
