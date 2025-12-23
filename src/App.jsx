@@ -560,22 +560,27 @@ const OutcomeCalculator = () => {
               )}
             </div>
           </div>
-
-          <div className="description">
-            <p className="description-text">
-              This calculator predicts 30-day mortality and 30-day readmission risk using advanced
-              machine learning models trained on ICD-10 diagnosis codes and patient demographics.
-              The full model is used when all demographic fields are provided; otherwise, an ICD-only model is used.
-            </p>
-            <p className="disclaimer-italic">
-              **Disclaimer: This tool is for educational and clinical decision support only. Always use clinical judgment and consult appropriate healthcare providers.**
-            </p>
-          </div>
         </div>
       </div>
 
       {/* Footer */}
       <div className="footer">
+        <p className="description-text" style={{
+          maxWidth: '900px',
+          margin: '0 auto 1rem auto',
+          textAlign: 'center'
+        }}>
+          This calculator predicts 30-day mortality and 30-day readmission risk using advanced
+          machine learning models trained on ICD-10 diagnosis codes and patient demographics.
+          The full model is used when all demographic fields are provided; otherwise, an ICD-only model is used.
+        </p>
+        <p className="disclaimer-italic" style={{
+          maxWidth: '900px',
+          margin: '0 auto 1rem auto',
+          textAlign: 'center'
+        }}>
+          **Disclaimer: This tool is for educational and clinical decision support only. Always use clinical judgment and consult appropriate healthcare providers.**
+        </p>
         <p>Questions or comments? <a href="mailto:levi_neuwirth@brown.edu" className="footer-link">Email Us</a>.</p>
       </div>
     </div>
