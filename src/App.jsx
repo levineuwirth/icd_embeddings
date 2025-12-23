@@ -16,14 +16,14 @@ const OutcomeCalculator = () => {
 
   const [results, setResults] = useState({
     mortality30: '',
-    readmission30: '',
-    modelUsed: null
+    readmission30: ''
   });
 
   const [icdSearchResults, setIcdSearchResults] = useState([]);
   const [validationResults, setValidationResults] = useState(null);
   const [ageError, setAgeError] = useState('');
   const [ageWarning, setAgeWarning] = useState('');
+  const [isCalculating, setIsCalculating] = useState(false);
 
   const primaryPayerOptions = [
     'Medicare',
@@ -240,17 +240,15 @@ const OutcomeCalculator = () => {
       return;
     }
 
+    setIsCalculating(true);
+
     try {
       const response = await axios.post(`${API_URL}/predict_flex/`, payload);
       const { readmission, mortality } = response.data;
 
-      // Store which model was used
-      const modelUsed = readmission.model_used || 'unknown';
-
       setResults({
         readmission30: `${(readmission.prediction * 100).toFixed(1)}%`,
-        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`,
-        modelUsed: modelUsed
+        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`
       });
     } catch (error) {
       console.error("Error calculating risk:", error);
@@ -259,6 +257,8 @@ const OutcomeCalculator = () => {
       } else {
         alert("There was an error calculating the risk. Please check the inputs and try again.");
       }
+    } finally {
+      setIsCalculating(false);
     }
   };
 
@@ -532,8 +532,9 @@ const OutcomeCalculator = () => {
           <button
             onClick={calculateRisk}
             className="calculate-button"
+            disabled={isCalculating}
           >
-            Calculate
+            {isCalculating ? 'Calculating...' : 'Calculate'}
           </button>
         </div>
 
@@ -541,40 +542,39 @@ const OutcomeCalculator = () => {
         <div className="results-panel">
           <div className="results-container">
             <h2 className="results-title">Predicted Clinical Outcomes:</h2>
-            
-            <div className="outcomes-container">
-              <div className="outcome-row">
-                <span className="outcome-label">30-day <span className="mortality">mortality</span>:</span>
-                <input
-                  type="text"
-                  className="result-input"
-                  value={results.mortality30}
-                  readOnly
-                />
-              </div>
-              
-              <div className="outcome-row">
-                <span className="outcome-label">30-day <span className="readmission">readmission</span>:</span>
-                <input
-                  type="text"
-                  className="result-input"
-                  value={results.readmission30}
-                  readOnly
-                />
-              </div>
-            </div>
 
-            {results.modelUsed && (
+            {isCalculating ? (
               <div style={{
-                marginTop: '1rem',
-                padding: '0.75rem',
-                backgroundColor: results.modelUsed === 'full_demographic' ? '#e8f5e9' : '#fff3e0',
-                borderRadius: '4px',
-                fontSize: '0.875rem'
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: '3rem',
+                fontSize: '1.125rem',
+                color: '#666'
               }}>
-                <strong>Model used:</strong> {results.modelUsed === 'full_demographic'
-                  ? 'Full Demographic Model (all fields provided)'
-                  : 'ICD-Only Model (incomplete demographics)'}
+                Calculating predictions...
+              </div>
+            ) : (
+              <div className="outcomes-container">
+                <div className="outcome-row">
+                  <span className="outcome-label">30-day <span className="mortality">mortality</span>:</span>
+                  <input
+                    type="text"
+                    className="result-input"
+                    value={results.mortality30}
+                    readOnly
+                  />
+                </div>
+
+                <div className="outcome-row">
+                  <span className="outcome-label">30-day <span className="readmission">readmission</span>:</span>
+                  <input
+                    type="text"
+                    className="result-input"
+                    value={results.readmission30}
+                    readOnly
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -593,7 +593,7 @@ const OutcomeCalculator = () => {
 
       {/* Footer */}
       <div className="footer">
-        <p>Questions or comments? <a href="mailto:contact@brown.com" className="footer-link">Email Us</a>.</p>
+        <p>Questions or comments? <a href="mailto:levi_neuwirth@brown.edu" className="footer-link">Email Us</a>.</p>
       </div>
     </div>
   );
