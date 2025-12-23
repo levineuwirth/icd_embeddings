@@ -25,16 +25,10 @@ COPY ./model /app/model
 
 # Download and set up ICD-10 data
 RUN cd /app/data && \
-    echo "Downloading ICD-10-CM data from CMS..." && \
     wget -q https://www.cms.gov/files/zip/2026-code-tables-tabular-and-index.zip -O icd-10.zip && \
-    echo "Extracting ICD-10 data..." && \
-    unzip -q icd-10.zip && \
-    echo "Parsing ICD-10 codes..." && \
+    unzip -o -q icd-10.zip && \
     python parse_icd10.py && \
-    echo "Cleaning up extracted XML files to reduce image size..." && \
-    rm -rf "Table and Index" && \
-    rm icd-10.zip && \
-    echo "ICD-10 setup complete!"
+    rm -rf "Table and Index" icd-10.zip
 
 # Expose the port the app runs on
 EXPOSE 8000
