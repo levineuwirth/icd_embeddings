@@ -1,5 +1,9 @@
+# Git LFS configuration for Hugging Face Spaces
+# Track all model files with Git LFS
 backend/model/*.keras filter=lfs diff=lfs merge=lfs -text
 backend/model/*.pkl filter=lfs diff=lfs merge=lfs -text
+backend/model/*.h5 filter=lfs diff=lfs merge=lfs -text
+backend/model/*.pb filter=lfs diff=lfs merge=lfs -text
 model/*.keras filter=lfs diff=lfs merge=lfs -text
 model/*.pkl filter=lfs diff=lfs merge=lfs -text
 model/*.dta filter=lfs diff=lfs merge=lfs -text

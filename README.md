@@ -1,6 +1,16 @@
-# ICD Prediction Application
+---
+title: ICD Prediction API
+emoji: 🏥
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+app_port: 7860
+---
 
-This repository contains a full-stack application for predicting 30-day hospital readmission risk based on patient data. It includes a React frontend and a Python (FastAPI) backend.
+# ICD Prediction API (Backend)
+
+This is the backend API for predicting 30-day hospital readmission and mortality risk based on patient data and ICD-10 diagnosis codes. It uses FastAPI with TensorFlow/Keras machine learning models.
 
 ## Repository Structure
 
@@ -12,9 +22,44 @@ This project is organized as a monorepo, with the frontend and backend code in s
 
 ## Deployment
 
-This application is designed to be deployed as two separate services: a backend web service and a frontend static site.
+This branch (`huggingface-backend`) is configured for deploying the backend API to Hugging Face Spaces using Docker.
 
-TODO: provide more detailed information!
+### Hugging Face Spaces Deployment
+
+This Space runs the FastAPI backend on port 7860. The frontend is deployed separately.
+
+**API Base URL**: `https://your-space-name.hf.space`
+
+### API Endpoints
+
+- `GET /`: Welcome message
+- `POST /predict/`: Predict readmission and mortality risk (requires full patient data)
+- `POST /predict_flex/`: Flexible prediction (uses ICD-only model if demographics are incomplete)
+- `GET /search_icd/?q=<query>&limit=<n>`: Search for ICD-10 codes
+- `POST /parse_icd_codes/`: Parse and validate ICD codes from text
+- `POST /upload_icd_file/`: Upload a file with ICD codes
+
+### Example API Usage
+
+```bash
+# Search for ICD codes
+curl "https://your-space-name.hf.space/search_icd/?q=diabetes&limit=10"
+
+# Make a prediction
+curl -X POST "https://your-space-name.hf.space/predict_flex/" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "age": 65,
+    "female": 0,
+    "pay1": 1,
+    "zipinc_qrtl": 3,
+    "icd_codes": ["E11.9", "I10", "J44.0"]
+  }'
+```
+
+### CORS Configuration
+
+The API is configured with CORS enabled (`allow_origins=["*"]`) to accept requests from any frontend origin.
 
 ## Development
 

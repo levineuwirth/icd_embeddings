@@ -17,11 +17,8 @@ COPY ./backend/requirements.txt /app/requirements.txt
 # Install the dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the backend application code
+# Copy the rest of the backend application code (including models)
 COPY ./backend /app
-
-# Copy the model files
-COPY ./model /app/model
 
 # Download and set up ICD-10 data
 RUN cd /app/data && \
@@ -30,8 +27,11 @@ RUN cd /app/data && \
     python parse_icd10.py && \
     rm -rf "Table and Index" icd-10.zip
 
-# Expose the port the app runs on
-EXPOSE 8000
+# Expose the port the app runs on (7860 is the default for Hugging Face Spaces)
+EXPOSE 7860
+
+# Set environment variable for unbuffered Python output
+ENV PYTHONUNBUFFERED=1
 
 # Define the command to run the application
 # Using shell form to allow environment variable expansion
@@ -40,7 +40,7 @@ EXPOSE 8000
 # ${WORKERS:-1} defaults to 1 worker if WORKERS not set
 # --timeout 300 allows ML predictions to complete without worker timeout
 CMD gunicorn -k uvicorn.workers.UvicornWorker ${MODULE_NAME:-main}:app \
-    --bind 0.0.0.0:8000 \
+    --bind 0.0.0.0:7860 \
     --workers ${WORKERS:-1} \
     --timeout 300 \
     --access-logfile - \

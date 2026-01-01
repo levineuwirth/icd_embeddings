@@ -1,0 +1,58 @@
+# Frontend files (not needed for backend-only deployment)
+node_modules/
+dist/
+docs/
+src/
+public/
+*.config.js
+*.config.ts
+package.json
+package-lock.json
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+icd/
+ENV/
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+!backend/README.md
+
+# MacOS
+.DS_Store
+
+# Logs
+*.log
+
+# Claude Code
+.claude/
