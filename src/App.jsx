@@ -16,7 +16,9 @@ const OutcomeCalculator = () => {
 
   const [results, setResults] = useState({
     mortality30: '',
-    readmission30: ''
+    readmission30: '',
+    mortalityData: null,
+    readmissionData: null
   });
 
   const [icdSearchResults, setIcdSearchResults] = useState([]);
@@ -248,7 +250,9 @@ const OutcomeCalculator = () => {
 
       setResults({
         readmission30: `${(readmission.prediction * 100).toFixed(1)}%`,
-        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`
+        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`,
+        readmissionData: readmission,
+        mortalityData: mortality
       });
     } catch (error) {
       console.error("Error calculating risk:", error);
@@ -496,22 +500,54 @@ const OutcomeCalculator = () => {
               <div className="outcomes-container">
                 <div className="outcome-row">
                   <span className="outcome-label">30-day <span className="mortality">mortality</span>:</span>
-                  <input
-                    type="text"
-                    className="result-input"
-                    value={results.mortality30}
-                    readOnly
-                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
+                    <input
+                      type="text"
+                      className="result-input"
+                      value={results.mortality30}
+                      readOnly
+                      style={{ flex: 1 }}
+                    />
+                    {results.mortalityData && results.mortalityData.high_risk !== undefined && (
+                      <span style={{
+                        padding: '0.375rem 0.75rem',
+                        borderRadius: '4px',
+                        fontSize: '0.875rem',
+                        fontWeight: '600',
+                        backgroundColor: results.mortalityData.high_risk ? '#fee2e2' : '#dbeafe',
+                        color: results.mortalityData.high_risk ? '#991b1b' : '#1e40af',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {results.mortalityData.high_risk ? 'HIGH RISK' : 'LOW RISK'}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="outcome-row">
                   <span className="outcome-label">30-day <span className="readmission">readmission</span>:</span>
-                  <input
-                    type="text"
-                    className="result-input"
-                    value={results.readmission30}
-                    readOnly
-                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
+                    <input
+                      type="text"
+                      className="result-input"
+                      value={results.readmission30}
+                      readOnly
+                      style={{ flex: 1 }}
+                    />
+                    {results.readmissionData && results.readmissionData.high_risk !== undefined && (
+                      <span style={{
+                        padding: '0.375rem 0.75rem',
+                        borderRadius: '4px',
+                        fontSize: '0.875rem',
+                        fontWeight: '600',
+                        backgroundColor: results.readmissionData.high_risk ? '#fee2e2' : '#dbeafe',
+                        color: results.readmissionData.high_risk ? '#991b1b' : '#1e40af',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {results.readmissionData.high_risk ? 'HIGH RISK' : 'LOW RISK'}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
