@@ -187,8 +187,11 @@ age_scaler = None
 BETA_READMIT = 0.139050
 BETA_MORTALITY = 0.003877
 
-THRESHOLD_READMIT = 0.517782
-THRESHOLD_MORTALITY = 0.447793
+THRESHOLD_READMIT_ICD_ONLY = 0.517782
+THRESHOLD_MORTALITY_ICD_ONLY = 0.447793
+
+THRESHOLD_READMIT_FULL = 0.502200
+THRESHOLD_MORTALITY_FULL = 0.501647
 
 try:
     readmit_model_path = os.path.join(BASE_DIR, 'model/readmit_hypertrial_auc.keras')
@@ -415,19 +418,39 @@ async def predict(data: PatientData):
         readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
         mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
 
-        readmission_interpretation = get_risk_interpretation(readmission_prob)
-        mortality_interpretation = get_risk_interpretation(mortality_prob)
+        readmission_high_risk = readmission_prob >= THRESHOLD_READMIT_FULL
+        mortality_high_risk = mortality_prob >= THRESHOLD_MORTALITY_FULL
+
+        if readmission_prob < 0.2:
+            readmission_interpretation = "Low risk of 30-day readmission."
+        elif readmission_high_risk:
+            readmission_interpretation = "High risk of 30-day readmission. Consider intervention to mitigate risk."
+        else:
+            readmission_interpretation = "Moderate risk of 30-day readmission. Clinical discretion is advised."
+
+        if mortality_prob < 0.2:
+            mortality_interpretation = "Low risk of 30-day mortality."
+        elif mortality_high_risk:
+            mortality_interpretation = "High risk of 30-day mortality. Consider intervention to mitigate risk."
+        else:
+            mortality_interpretation = "Moderate risk of 30-day mortality. Clinical discretion is advised."
 
         return {
             "readmission": {
                 "prediction": float(readmission_prob),
                 "confidence_interval": [float(readmission_lower_ci), float(readmission_upper_ci)],
                 "interpretation": readmission_interpretation,
+                "model_used": "full_demographic",
+                "high_risk": readmission_high_risk,
+                "threshold_used": THRESHOLD_READMIT_FULL
             },
             "mortality": {
                 "prediction": float(mortality_prob),
                 "confidence_interval": [float(mortality_lower_ci), float(mortality_upper_ci)],
                 "interpretation": mortality_interpretation,
+                "model_used": "full_demographic",
+                "high_risk": mortality_high_risk,
+                "threshold_used": THRESHOLD_MORTALITY_FULL
             }
         }
     except Exception as e:
@@ -471,8 +494,8 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
     readmission_adjusted = float(calibrate_probability(readmission_raw, BETA_READMIT).numpy())
     mortality_adjusted = float(calibrate_probability(mortality_raw, BETA_MORTALITY).numpy())
 
-    threshold_readmit_adjusted = float(calibrate_probability(THRESHOLD_READMIT, BETA_READMIT).numpy())
-    threshold_mortality_adjusted = float(calibrate_probability(THRESHOLD_MORTALITY, BETA_MORTALITY).numpy())
+    threshold_readmit_adjusted = float(calibrate_probability(THRESHOLD_READMIT_ICD_ONLY, BETA_READMIT).numpy())
+    threshold_mortality_adjusted = float(calibrate_probability(THRESHOLD_MORTALITY_ICD_ONLY, BETA_MORTALITY).numpy())
 
     readmission_high_risk = readmission_adjusted >= threshold_readmit_adjusted
     mortality_high_risk = mortality_adjusted >= threshold_mortality_adjusted
@@ -592,21 +615,39 @@ async def predict_flex(data: PatientDataFlex):
             readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
             mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
 
-            readmission_interpretation = get_risk_interpretation(readmission_prob)
-            mortality_interpretation = get_risk_interpretation(mortality_prob)
+            readmission_high_risk = readmission_prob >= THRESHOLD_READMIT_FULL
+            mortality_high_risk = mortality_prob >= THRESHOLD_MORTALITY_FULL
+
+            if readmission_prob < 0.2:
+                readmission_interpretation = "Low risk of 30-day readmission."
+            elif readmission_high_risk:
+                readmission_interpretation = "High risk of 30-day readmission. Consider intervention to mitigate risk."
+            else:
+                readmission_interpretation = "Moderate risk of 30-day readmission. Clinical discretion is advised."
+
+            if mortality_prob < 0.2:
+                mortality_interpretation = "Low risk of 30-day mortality."
+            elif mortality_high_risk:
+                mortality_interpretation = "High risk of 30-day mortality. Consider intervention to mitigate risk."
+            else:
+                mortality_interpretation = "Moderate risk of 30-day mortality. Clinical discretion is advised."
 
             return {
                 "readmission": {
                     "prediction": float(readmission_prob),
                     "confidence_interval": [float(readmission_lower_ci), float(readmission_upper_ci)],
                     "interpretation": readmission_interpretation,
-                    "model_used": "full_demographic"
+                    "model_used": "full_demographic",
+                    "high_risk": readmission_high_risk,
+                    "threshold_used": THRESHOLD_READMIT_FULL
                 },
                 "mortality": {
                     "prediction": float(mortality_prob),
                     "confidence_interval": [float(mortality_lower_ci), float(mortality_upper_ci)],
                     "interpretation": mortality_interpretation,
-                    "model_used": "full_demographic"
+                    "model_used": "full_demographic",
+                    "high_risk": mortality_high_risk,
+                    "threshold_used": THRESHOLD_MORTALITY_FULL
                 }
             }
         else:
