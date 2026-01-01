@@ -418,8 +418,8 @@ async def predict(data: PatientData):
         readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
         mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
 
-        readmission_high_risk = readmission_prob >= THRESHOLD_READMIT_FULL
-        mortality_high_risk = mortality_prob >= THRESHOLD_MORTALITY_FULL
+        readmission_high_risk = bool(readmission_prob >= THRESHOLD_READMIT_FULL)
+        mortality_high_risk = bool(mortality_prob >= THRESHOLD_MORTALITY_FULL)
 
         if readmission_prob < 0.2:
             readmission_interpretation = "Low risk of 30-day readmission."
@@ -497,8 +497,8 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
     threshold_readmit_adjusted = float(calibrate_probability(THRESHOLD_READMIT_ICD_ONLY, BETA_READMIT).numpy())
     threshold_mortality_adjusted = float(calibrate_probability(THRESHOLD_MORTALITY_ICD_ONLY, BETA_MORTALITY).numpy())
 
-    readmission_high_risk = readmission_adjusted >= threshold_readmit_adjusted
-    mortality_high_risk = mortality_adjusted >= threshold_mortality_adjusted
+    readmission_high_risk = bool(readmission_adjusted >= threshold_readmit_adjusted)
+    mortality_high_risk = bool(mortality_adjusted >= threshold_mortality_adjusted)
 
     if readmission_adjusted < 0.2:
         readmission_interpretation = "Low risk of 30-day readmission."
@@ -615,8 +615,8 @@ async def predict_flex(data: PatientDataFlex):
             readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(model_readmit, batch_inputs)
             mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(model_mortality, batch_inputs)
 
-            readmission_high_risk = readmission_prob >= THRESHOLD_READMIT_FULL
-            mortality_high_risk = mortality_prob >= THRESHOLD_MORTALITY_FULL
+            readmission_high_risk = bool(readmission_prob >= THRESHOLD_READMIT_FULL)
+            mortality_high_risk = bool(mortality_prob >= THRESHOLD_MORTALITY_FULL)
 
             if readmission_prob < 0.2:
                 readmission_interpretation = "Low risk of 30-day readmission."
