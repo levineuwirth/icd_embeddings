@@ -433,12 +433,31 @@ const OutcomeCalculator = () => {
                       {validationResults.invalid_codes.length > 0 && (
                         <span className="invalid-count">⚠ {validationResults.invalid_codes.length} invalid codes</span>
                       )}
+                      {validationResults.codes_not_in_training && validationResults.codes_not_in_training.length > 0 && (
+                        <span className="invalid-count" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>
+                          ⚠ {validationResults.codes_not_in_training.length} not in training
+                        </span>
+                      )}
                     </div>
 
                     {validationResults.warnings.length > 0 && (
                       <div className="validation-warnings">
                         {validationResults.warnings.map((warning, idx) => (
                           <p key={idx} className="warning-text">⚠ {warning}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {validationResults.codes_not_in_training && validationResults.codes_not_in_training.length > 0 && (
+                      <div className="invalid-codes-list" style={{ backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}>
+                        <p className="invalid-header" style={{ color: '#92400e' }}>Codes not in training dataset:</p>
+                        {validationResults.codes_not_in_training.map((item, idx) => (
+                          <div key={idx} className="invalid-code-item">
+                            <span className="invalid-code-name">{item.code}</span>
+                            <span className="suggestions" style={{ color: '#92400e' }}>
+                              ({item.description}) - will be treated as unknown
+                            </span>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -585,7 +604,7 @@ const OutcomeCalculator = () => {
                 onChange={(e) => handleIcdLookupSearch(e.target.value)}
                 style={{ width: '100%' }}
               />
-              {icdLookupResults && Object.keys(icdLookupResults).length > 0 && (
+              {icdLookupResults && icdLookupResults.length > 0 && (
                 <div className="search-results" style={{
                   position: 'absolute',
                   top: '100%',
@@ -593,13 +612,31 @@ const OutcomeCalculator = () => {
                   right: 0,
                   zIndex: 1000
                 }}>
-                  {Object.entries(icdLookupResults).map(([code, desc]) => (
+                  {icdLookupResults.map((result) => (
                     <div
-                      key={code}
+                      key={result.code}
                       className="search-result"
-                      onClick={() => selectIcdFromLookup(code)}
+                      onClick={() => selectIcdFromLookup(result.code)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between'
+                      }}
                     >
-                      {code}: {desc}
+                      <span>{result.code}: {result.description}</span>
+                      {!result.in_training_dataset && (
+                        <span style={{
+                          fontSize: '0.75rem',
+                          color: '#f59e0b',
+                          backgroundColor: '#fef3c7',
+                          padding: '0.125rem 0.375rem',
+                          borderRadius: '4px',
+                          marginLeft: '0.5rem',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          Not in training
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
