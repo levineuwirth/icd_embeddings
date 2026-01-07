@@ -688,6 +688,10 @@ async def search_icd(q: str, limit: int = 50):
         code_normalized = code.replace('.', '').upper()
         in_training = code_normalized in training_codes
 
+        # Only include codes that are in the training dataset
+        if not in_training:
+            continue
+
         result_entry = {
             "code": code,
             "description": description,

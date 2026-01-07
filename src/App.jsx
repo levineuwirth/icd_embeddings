@@ -617,26 +617,8 @@ const OutcomeCalculator = () => {
                       key={result.code}
                       className="search-result"
                       onClick={() => selectIcdFromLookup(result.code)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between'
-                      }}
                     >
-                      <span>{result.code}: {result.description}</span>
-                      {!result.in_training_dataset && (
-                        <span style={{
-                          fontSize: '0.75rem',
-                          color: '#f59e0b',
-                          backgroundColor: '#fef3c7',
-                          padding: '0.125rem 0.375rem',
-                          borderRadius: '4px',
-                          marginLeft: '0.5rem',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          Not in training
-                        </span>
-                      )}
+                      {result.code}: {result.description}
                     </div>
                   ))}
                 </div>
