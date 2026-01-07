@@ -685,10 +685,13 @@ async def search_icd(q: str, limit: int = 50):
         code_lower = code.lower()
         desc_lower = description.lower()
 
+        code_normalized = code.replace('.', '').upper()
+        in_training = code_normalized in training_codes
+
         result_entry = {
             "code": code,
             "description": description,
-            "in_training_dataset": code in training_codes
+            "in_training_dataset": in_training
         }
 
         if code_lower == query:
@@ -750,7 +753,8 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
     for code in unique_codes[:max_codes]:
         if code in icd_codes:
             valid_codes.append(code)
-            if code not in training_codes:
+            code_normalized = code.replace('.', '').upper()
+            if code_normalized not in training_codes:
                 codes_not_in_training.append({
                     "code": code,
                     "description": icd_codes[code]
