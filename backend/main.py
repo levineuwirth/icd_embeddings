@@ -668,39 +668,42 @@ async def search_icd(q: str, limit: int = 50):
         limit (int): Maximum number of results to return (default: 50).
 
     Returns:
-        dict: A dictionary of matching ICD codes and descriptions, ordered by relevance.
+        list: A list of matching ICD codes with descriptions and training dataset status.
     """
     if not q or len(q.strip()) == 0:
-        return {}
+        return []
 
     query = q.strip().lower()
-    results = {}
+    training_codes = set(encoder.classes_)
 
-    exact_code_matches = {}
-    code_starts_with = {}
-    code_contains = {}
-    desc_contains = {}
+    exact_code_matches = []
+    code_starts_with = []
+    code_contains = []
+    desc_contains = []
 
     for code, description in icd_codes.items():
         code_lower = code.lower()
         desc_lower = description.lower()
 
-        if code_lower == query:
-            exact_code_matches[code] = description
-        elif code_lower.startswith(query):
-            code_starts_with[code] = description
-        elif query in code_lower:
-            code_contains[code] = description
-        elif query in desc_lower:
-            desc_contains[code] = description
+        result_entry = {
+            "code": code,
+            "description": description,
+            "in_training_dataset": code in training_codes
+        }
 
-    results.update(exact_code_matches)
-    results.update(code_starts_with)
-    results.update(code_contains)
-    results.update(desc_contains)
+        if code_lower == query:
+            exact_code_matches.append(result_entry)
+        elif code_lower.startswith(query):
+            code_starts_with.append(result_entry)
+        elif query in code_lower:
+            code_contains.append(result_entry)
+        elif query in desc_lower:
+            desc_contains.append(result_entry)
+
+    results = exact_code_matches + code_starts_with + code_contains + desc_contains
 
     if len(results) > limit:
-        results = dict(list(results.items())[:limit])
+        results = results[:limit]
 
     return results
 
@@ -723,6 +726,7 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
         Dictionary with:
         - valid_codes: List of valid ICD codes
         - invalid_codes: List of codes not found in database with suggestions
+        - codes_not_in_training: List of codes that are valid ICD-10 but not in training dataset
         - warnings: List of warning messages
     """
     cleaned_text = text.replace(',', ' ').replace('\n', ' ').replace('\t', ' ').replace(';', ' ')
@@ -738,11 +742,19 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
     valid_codes = []
     invalid_codes = []
+    codes_not_in_training = []
     warnings = []
+
+    training_codes = set(encoder.classes_)
 
     for code in unique_codes[:max_codes]:
         if code in icd_codes:
             valid_codes.append(code)
+            if code not in training_codes:
+                codes_not_in_training.append({
+                    "code": code,
+                    "description": icd_codes[code]
+                })
         else:
             suggestions = []
             code_lower = code.lower()
@@ -763,9 +775,13 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
     if len(potential_codes) != len(unique_codes):
         warnings.append(f"Removed {len(potential_codes) - len(unique_codes)} duplicate codes.")
 
+    if codes_not_in_training:
+        warnings.append(f"{len(codes_not_in_training)} valid ICD-10 code(s) are not in the training dataset and will be treated as unknown during prediction.")
+
     return {
         "valid_codes": valid_codes,
         "invalid_codes": invalid_codes,
+        "codes_not_in_training": codes_not_in_training,
         "warnings": warnings,
         "total_found": len(unique_codes)
     }
