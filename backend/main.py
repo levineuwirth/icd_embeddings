@@ -403,6 +403,8 @@ async def predict(data: PatientData):
         for col in icd_columns:
             df[col] = df[col].astype(str).str.upper()
             original_code = df[col].values[0]
+            # Normalize by removing periods before mapping
+            df[col] = df[col].str.replace('.', '', regex=False)
             df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
             if df[col].values[0] == unknown_label_int and original_code != '':
                 codes_mapped_to_nan.append(original_code)
@@ -520,6 +522,8 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
     for col in icd_columns:
         df[col] = df[col].astype(str).str.upper()
         original_code = df[col].values[0]
+        # Normalize by removing periods before mapping
+        df[col] = df[col].str.replace('.', '', regex=False)
         df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
         if df[col].values[0] == unknown_label_int and original_code != '':
             codes_mapped_to_nan.append(original_code)
@@ -644,6 +648,8 @@ async def predict_flex(data: PatientDataFlex):
             for col in icd_columns:
                 df[col] = df[col].astype(str).str.upper()
                 original_code = df[col].values[0]
+                # Normalize by removing periods before mapping
+                df[col] = df[col].str.replace('.', '', regex=False)
                 df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
                 if df[col].values[0] == unknown_label_int and original_code != '':
                     codes_mapped_to_nan.append(original_code)
