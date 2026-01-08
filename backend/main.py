@@ -731,9 +731,8 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
     Returns:
         Dictionary with:
-        - valid_codes: List of valid ICD codes
-        - invalid_codes: List of codes not found in database with suggestions
-        - codes_not_in_training: List of codes that are valid ICD-10 but not in training dataset
+        - valid_codes: List of valid ICD codes that are in the training dataset
+        - invalid_codes: List of invalid codes with reason (not_in_training or invalid_code)
         - warnings: List of warning messages
     """
     cleaned_text = text.replace(',', ' ').replace('\n', ' ').replace('\t', ' ').replace(';', ' ')
@@ -749,21 +748,28 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
     valid_codes = []
     invalid_codes = []
-    codes_not_in_training = []
     warnings = []
 
     training_codes = set(encoder.classes_)
 
     for code in unique_codes[:max_codes]:
+        code_normalized = code.replace('.', '').upper()
+
         if code in icd_codes:
-            valid_codes.append(code)
-            code_normalized = code.replace('.', '').upper()
-            if code_normalized not in training_codes:
-                codes_not_in_training.append({
+            # Code exists in ICD-10 database
+            if code_normalized in training_codes:
+                # Code is in training dataset - valid
+                valid_codes.append(code)
+            else:
+                # Code is valid ICD-10 but not in training - treat as invalid
+                invalid_codes.append({
                     "code": code,
-                    "description": icd_codes[code]
+                    "reason": "not_in_training",
+                    "description": icd_codes[code],
+                    "suggestions": []
                 })
         else:
+            # Code not in ICD-10 database at all - completely invalid
             suggestions = []
             code_lower = code.lower()
             for icd_code in list(icd_codes.keys())[:1000]:
@@ -774,6 +780,7 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
             invalid_codes.append({
                 "code": code,
+                "reason": "invalid_code",
                 "suggestions": suggestions[:3]
             })
 
@@ -783,13 +790,13 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
     if len(potential_codes) != len(unique_codes):
         warnings.append(f"Removed {len(potential_codes) - len(unique_codes)} duplicate codes.")
 
-    if codes_not_in_training:
-        warnings.append(f"{len(codes_not_in_training)} valid ICD-10 code(s) are not in the training dataset and will be treated as unknown during prediction.")
+    not_in_training_count = sum(1 for item in invalid_codes if item.get("reason") == "not_in_training")
+    if not_in_training_count > 0:
+        warnings.append(f"{not_in_training_count} code(s) are valid ICD-10 codes but not in the training dataset and cannot be used.")
 
     return {
         "valid_codes": valid_codes,
         "invalid_codes": invalid_codes,
-        "codes_not_in_training": codes_not_in_training,
         "warnings": warnings,
         "total_found": len(unique_codes)
     }

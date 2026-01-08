@@ -433,11 +433,6 @@ const OutcomeCalculator = () => {
                       {validationResults.invalid_codes.length > 0 && (
                         <span className="invalid-count">⚠ {validationResults.invalid_codes.length} invalid codes</span>
                       )}
-                      {validationResults.codes_not_in_training && validationResults.codes_not_in_training.length > 0 && (
-                        <span className="invalid-count" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>
-                          ⚠ {validationResults.codes_not_in_training.length} not in training
-                        </span>
-                      )}
                     </div>
 
                     {validationResults.warnings.length > 0 && (
@@ -448,29 +443,27 @@ const OutcomeCalculator = () => {
                       </div>
                     )}
 
-                    {validationResults.codes_not_in_training && validationResults.codes_not_in_training.length > 0 && (
-                      <div className="invalid-codes-list" style={{ backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}>
-                        <p className="invalid-header" style={{ color: '#92400e' }}>Codes not in training dataset:</p>
-                        {validationResults.codes_not_in_training.map((item, idx) => (
-                          <div key={idx} className="invalid-code-item">
-                            <span className="invalid-code-name">{item.code}</span>
-                            <span className="suggestions" style={{ color: '#92400e' }}>
-                              ({item.description}) - will be treated as unknown
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
                     {validationResults.invalid_codes.length > 0 && (
                       <div className="invalid-codes-list">
-                        <p className="invalid-header">Invalid codes found:</p>
+                        <p className="invalid-header">Invalid codes:</p>
                         {validationResults.invalid_codes.map((item, idx) => (
                           <div key={idx} className="invalid-code-item">
                             <span className="invalid-code-name">{item.code}</span>
-                            {item.suggestions.length > 0 && (
+                            {item.reason === 'not_in_training' ? (
+                              <span className="suggestions" style={{ color: '#92400e' }}>
+                                - Valid ICD-10 but not in training dataset
+                                {item.description && ` (${item.description})`}
+                              </span>
+                            ) : (
+                              item.suggestions && item.suggestions.length > 0 && (
+                                <span className="suggestions">
+                                  - Not found. Did you mean: {item.suggestions.join(', ')}?
+                                </span>
+                              )
+                            )}
+                            {item.reason === 'invalid_code' && (!item.suggestions || item.suggestions.length === 0) && (
                               <span className="suggestions">
-                                (Did you mean: {item.suggestions.join(', ')}?)
+                                - Not found in ICD-10 database
                               </span>
                             )}
                           </div>
