@@ -8,6 +8,7 @@ It includes endpoints for making predictions and searching for ICD codes.
 import pickle
 import os
 import json
+import logging
 from typing import List, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
@@ -18,6 +19,13 @@ import pandas as pd
 import tensorflow as tf
 from keras.models import load_model
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 @tf.keras.utils.register_keras_serializable(package="Custom")
 def f2_score(y_true, y_pred):
@@ -387,9 +395,29 @@ async def predict(data: PatientData):
 
         icd_columns = [f'I10_DX{i}' for i in range(1, 41)]
 
+        # Log incoming codes
+        logger.info(f"Prediction request - incoming codes: {data.icd_codes}")
+
+        # Track which codes get mapped to NAN
+        codes_mapped_to_nan = []
         for col in icd_columns:
             df[col] = df[col].astype(str).str.upper()
+            original_code = df[col].values[0]
             df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
+            if df[col].values[0] == unknown_label_int and original_code != '':
+                codes_mapped_to_nan.append(original_code)
+
+        if codes_mapped_to_nan:
+            logger.warning(f"Codes mapped to NAN: {codes_mapped_to_nan}")
+
+        # Check if all non-empty codes mapped to NAN (unknown)
+        non_empty_codes = df[icd_columns].values[0][:len(data.icd_codes)]
+        if len(non_empty_codes) > 0 and all(code == unknown_label_int for code in non_empty_codes):
+            logger.error(f"All codes mapped to NAN - rejecting prediction")
+            raise HTTPException(
+                status_code=400,
+                detail="No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset."
+            )
 
         df['AGE'] = age_scaler.transform(df[['AGE']])
 
@@ -420,6 +448,8 @@ async def predict(data: PatientData):
 
         readmission_high_risk = bool(readmission_prob >= THRESHOLD_READMIT_FULL)
         mortality_high_risk = bool(mortality_prob >= THRESHOLD_MORTALITY_FULL)
+
+        logger.info(f"Prediction successful - Readmission: {readmission_prob:.4f}, Mortality: {mortality_prob:.4f}")
 
         if readmission_prob < 0.2:
             readmission_interpretation = "Low risk of 30-day readmission."
@@ -482,9 +512,29 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
 
     icd_columns = [f'I10_DX{i}' for i in range(1, 41)]
 
+    # Log incoming codes
+    logger.info(f"ICD-only prediction request - incoming codes: {icd_codes}")
+
+    # Track which codes get mapped to NAN
+    codes_mapped_to_nan = []
     for col in icd_columns:
         df[col] = df[col].astype(str).str.upper()
+        original_code = df[col].values[0]
         df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
+        if df[col].values[0] == unknown_label_int and original_code != '':
+            codes_mapped_to_nan.append(original_code)
+
+    if codes_mapped_to_nan:
+        logger.warning(f"Codes mapped to NAN: {codes_mapped_to_nan}")
+
+    # Check if all non-empty codes mapped to NAN (unknown)
+    non_empty_codes = df[icd_columns].values[0][:len(icd_codes)]
+    if len(non_empty_codes) > 0 and all(code == unknown_label_int for code in non_empty_codes):
+        logger.error(f"All codes mapped to NAN - rejecting prediction")
+        raise HTTPException(
+            status_code=400,
+            detail="No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset."
+        )
 
     X_new = df[icd_columns].astype('float32')
 
@@ -499,6 +549,8 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
 
     readmission_high_risk = bool(readmission_adjusted >= threshold_readmit_adjusted)
     mortality_high_risk = bool(mortality_adjusted >= threshold_mortality_adjusted)
+
+    logger.info(f"ICD-only prediction successful - Readmission: {readmission_adjusted:.4f}, Mortality: {mortality_adjusted:.4f}")
 
     if readmission_adjusted < 0.2:
         readmission_interpretation = "Low risk of 30-day readmission."
@@ -584,9 +636,29 @@ async def predict_flex(data: PatientDataFlex):
 
             icd_columns = [f'I10_DX{i}' for i in range(1, 41)]
 
+            # Log incoming codes
+            logger.info(f"Flexible prediction request (full demographic) - incoming codes: {data.icd_codes}")
+
+            # Track which codes get mapped to NAN
+            codes_mapped_to_nan = []
             for col in icd_columns:
                 df[col] = df[col].astype(str).str.upper()
+                original_code = df[col].values[0]
                 df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
+                if df[col].values[0] == unknown_label_int and original_code != '':
+                    codes_mapped_to_nan.append(original_code)
+
+            if codes_mapped_to_nan:
+                logger.warning(f"Codes mapped to NAN: {codes_mapped_to_nan}")
+
+            # Check if all non-empty codes mapped to NAN (unknown)
+            non_empty_codes = df[icd_columns].values[0][:len(data.icd_codes)]
+            if len(non_empty_codes) > 0 and all(code == unknown_label_int for code in non_empty_codes):
+                logger.error(f"All codes mapped to NAN - rejecting prediction")
+                raise HTTPException(
+                    status_code=400,
+                    detail="No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset."
+                )
 
             df['AGE'] = age_scaler.transform(df[['AGE']])
 
@@ -617,6 +689,8 @@ async def predict_flex(data: PatientDataFlex):
 
             readmission_high_risk = bool(readmission_prob >= THRESHOLD_READMIT_FULL)
             mortality_high_risk = bool(mortality_prob >= THRESHOLD_MORTALITY_FULL)
+
+            logger.info(f"Flexible prediction (full demographic) successful - Readmission: {readmission_prob:.4f}, Mortality: {mortality_prob:.4f}")
 
             if readmission_prob < 0.2:
                 readmission_interpretation = "Low risk of 30-day readmission."
@@ -651,6 +725,7 @@ async def predict_flex(data: PatientDataFlex):
                 }
             }
         else:
+            logger.info(f"Flexible prediction request (ICD-only fallback) - incoming codes: {data.icd_codes}")
             result = predict_icd_only(data.icd_codes)
             return result
 
@@ -731,9 +806,8 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
     Returns:
         Dictionary with:
-        - valid_codes: List of valid ICD codes
-        - invalid_codes: List of codes not found in database with suggestions
-        - codes_not_in_training: List of codes that are valid ICD-10 but not in training dataset
+        - valid_codes: List of valid ICD codes that are in the training dataset
+        - invalid_codes: List of invalid codes with reason (not_in_training or invalid_code)
         - warnings: List of warning messages
     """
     cleaned_text = text.replace(',', ' ').replace('\n', ' ').replace('\t', ' ').replace(';', ' ')
@@ -749,21 +823,28 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
     valid_codes = []
     invalid_codes = []
-    codes_not_in_training = []
     warnings = []
 
     training_codes = set(encoder.classes_)
 
     for code in unique_codes[:max_codes]:
+        code_normalized = code.replace('.', '').upper()
+
         if code in icd_codes:
-            valid_codes.append(code)
-            code_normalized = code.replace('.', '').upper()
-            if code_normalized not in training_codes:
-                codes_not_in_training.append({
+            # Code exists in ICD-10 database
+            if code_normalized in training_codes:
+                # Code is in training dataset - valid
+                valid_codes.append(code)
+            else:
+                # Code is valid ICD-10 but not in training - treat as invalid
+                invalid_codes.append({
                     "code": code,
-                    "description": icd_codes[code]
+                    "reason": "not_in_training",
+                    "description": icd_codes[code],
+                    "suggestions": []
                 })
         else:
+            # Code not in ICD-10 database at all - completely invalid
             suggestions = []
             code_lower = code.lower()
             for icd_code in list(icd_codes.keys())[:1000]:
@@ -774,6 +855,7 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
             invalid_codes.append({
                 "code": code,
+                "reason": "invalid_code",
                 "suggestions": suggestions[:3]
             })
 
@@ -783,13 +865,9 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
     if len(potential_codes) != len(unique_codes):
         warnings.append(f"Removed {len(potential_codes) - len(unique_codes)} duplicate codes.")
 
-    if codes_not_in_training:
-        warnings.append(f"{len(codes_not_in_training)} valid ICD-10 code(s) are not in the training dataset and will be treated as unknown during prediction.")
-
     return {
         "valid_codes": valid_codes,
         "invalid_codes": invalid_codes,
-        "codes_not_in_training": codes_not_in_training,
         "warnings": warnings,
         "total_found": len(unique_codes)
     }
