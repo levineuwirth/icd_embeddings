@@ -178,6 +178,14 @@ const OutcomeCalculator = () => {
   const calculateRisk = async () => {
     const { age, gender, primaryPayer, householdIncome, icdCodes, icdMethod, pastedText } = formData;
 
+    // Clear previous results immediately
+    setResults({
+      mortality30: '',
+      readmission30: '',
+      mortalityData: null,
+      readmissionData: null
+    });
+
     // Parse pasted text if using paste method
     let codes = icdCodes;
     if (icdMethod === 'paste' && pastedText.trim()) {
