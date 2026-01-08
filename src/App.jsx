@@ -428,21 +428,6 @@ const OutcomeCalculator = () => {
                 {/* Validation Results */}
                 {validationResults && (
                   <div className="validation-results">
-                    <div className="validation-summary">
-                      <span className="valid-count">✓ {validationResults.valid_codes.length} valid codes</span>
-                      {validationResults.invalid_codes.length > 0 && (
-                        <span className="invalid-count">⚠ {validationResults.invalid_codes.length} invalid codes</span>
-                      )}
-                    </div>
-
-                    {validationResults.warnings.length > 0 && (
-                      <div className="validation-warnings">
-                        {validationResults.warnings.map((warning, idx) => (
-                          <p key={idx} className="warning-text">⚠ {warning}</p>
-                        ))}
-                      </div>
-                    )}
-
                     {validationResults.invalid_codes.length > 0 && (
                       <div className="invalid-codes-list">
                         <p className="invalid-header">Invalid codes:</p>

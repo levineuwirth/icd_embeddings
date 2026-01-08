@@ -790,10 +790,6 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
     if len(potential_codes) != len(unique_codes):
         warnings.append(f"Removed {len(potential_codes) - len(unique_codes)} duplicate codes.")
 
-    not_in_training_count = sum(1 for item in invalid_codes if item.get("reason") == "not_in_training")
-    if not_in_training_count > 0:
-        warnings.append(f"{not_in_training_count} code(s) are valid ICD-10 codes but not in the training dataset and cannot be used.")
-
     return {
         "valid_codes": valid_codes,
         "invalid_codes": invalid_codes,
