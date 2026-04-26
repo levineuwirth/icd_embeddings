@@ -28,6 +28,11 @@ ENV/
 htmlcov/
 *.cover
 .hypothesis/
+backend/tests/
+
+# Dev-only scripts and fixtures (not used at runtime)
+backend/validate_models.py
+backend/small_dataset_predictions_*.csv
 
 # IDEs
 .idea/
