@@ -347,21 +347,23 @@ class PatientDataFlex(BaseModel):
         return v
 
 
-def calibrate_probability(p_sampled, beta, eps=1e-8):
+def calibrate_probability(p_sampled, beta: float, eps: float = 1e-8) -> float:
     """
-    Correct predicted probabilities after undersampling.
+    Correct a predicted probability after undersampling.
 
     Args:
-        p_sampled: predicted probability from model trained on undersampled data
-        beta: undersampling ratio = (# majority after undersampling) / (# majority original)
-              OR equivalently: original_positive_rate (if you balanced to 50/50)
-        eps: small constant to avoid division by zero
+        p_sampled: probability from a model trained on undersampled data
+            (Python float or any numeric coercible to one).
+        beta: undersampling ratio = (# majority kept) / (# majority original),
+            equivalently the original positive rate when training was
+            balanced 50/50.
+        eps: small constant to avoid division by zero at the boundaries.
 
     Returns:
-        calibrated probability reflecting true population distribution
+        Calibrated probability reflecting the true population distribution.
     """
-    p_sampled = tf.clip_by_value(p_sampled, eps, 1 - eps)
-    return p_sampled / (p_sampled + (1 - p_sampled) / beta)
+    p = min(max(float(p_sampled), eps), 1 - eps)
+    return p / (p + (1 - p) / beta)
 
 
 def calculate_prediction_ci(model, inputs, n_bootstraps=100, ci=0.95):
@@ -487,12 +489,8 @@ async def predict(data: PatientData):
         readmission_raw = model_readmit.predict(batch_inputs, verbose=0).flatten()[0]
         mortality_raw = model_mortality.predict(batch_inputs, verbose=0).flatten()[0]
 
-        readmission_prob = float(
-            calibrate_probability(readmission_raw, BETA_READMIT).numpy()
-        )
-        mortality_prob = float(
-            calibrate_probability(mortality_raw, BETA_MORTALITY).numpy()
-        )
+        readmission_prob = calibrate_probability(readmission_raw, BETA_READMIT)
+        mortality_prob = calibrate_probability(mortality_raw, BETA_MORTALITY)
 
         readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(
             model_readmit, batch_inputs
@@ -501,11 +499,11 @@ async def predict(data: PatientData):
             model_mortality, batch_inputs
         )
 
-        threshold_readmit_adjusted = float(
-            calibrate_probability(THRESHOLD_READMIT_FULL, BETA_READMIT).numpy()
+        threshold_readmit_adjusted = calibrate_probability(
+            THRESHOLD_READMIT_FULL, BETA_READMIT
         )
-        threshold_mortality_adjusted = float(
-            calibrate_probability(THRESHOLD_MORTALITY_FULL, BETA_MORTALITY).numpy()
+        threshold_mortality_adjusted = calibrate_probability(
+            THRESHOLD_MORTALITY_FULL, BETA_MORTALITY
         )
 
         readmission_high_risk = bool(readmission_prob >= threshold_readmit_adjusted)
@@ -629,18 +627,14 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
         0
     ]
 
-    readmission_adjusted = float(
-        calibrate_probability(readmission_raw, BETA_READMIT).numpy()
-    )
-    mortality_adjusted = float(
-        calibrate_probability(mortality_raw, BETA_MORTALITY).numpy()
-    )
+    readmission_adjusted = calibrate_probability(readmission_raw, BETA_READMIT)
+    mortality_adjusted = calibrate_probability(mortality_raw, BETA_MORTALITY)
 
-    threshold_readmit_adjusted = float(
-        calibrate_probability(THRESHOLD_READMIT_ICD_ONLY, BETA_READMIT).numpy()
+    threshold_readmit_adjusted = calibrate_probability(
+        THRESHOLD_READMIT_ICD_ONLY, BETA_READMIT
     )
-    threshold_mortality_adjusted = float(
-        calibrate_probability(THRESHOLD_MORTALITY_ICD_ONLY, BETA_MORTALITY).numpy()
+    threshold_mortality_adjusted = calibrate_probability(
+        THRESHOLD_MORTALITY_ICD_ONLY, BETA_MORTALITY
     )
 
     readmission_high_risk = bool(readmission_adjusted >= threshold_readmit_adjusted)
@@ -813,12 +807,8 @@ async def predict_flex(data: PatientDataFlex):
                 0
             ]
 
-            readmission_prob = float(
-                calibrate_probability(readmission_raw, BETA_READMIT).numpy()
-            )
-            mortality_prob = float(
-                calibrate_probability(mortality_raw, BETA_MORTALITY).numpy()
-            )
+            readmission_prob = calibrate_probability(readmission_raw, BETA_READMIT)
+            mortality_prob = calibrate_probability(mortality_raw, BETA_MORTALITY)
 
             readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(
                 model_readmit, batch_inputs
@@ -827,11 +817,11 @@ async def predict_flex(data: PatientDataFlex):
                 model_mortality, batch_inputs
             )
 
-            threshold_readmit_adjusted = float(
-                calibrate_probability(THRESHOLD_READMIT_FULL, BETA_READMIT).numpy()
+            threshold_readmit_adjusted = calibrate_probability(
+                THRESHOLD_READMIT_FULL, BETA_READMIT
             )
-            threshold_mortality_adjusted = float(
-                calibrate_probability(THRESHOLD_MORTALITY_FULL, BETA_MORTALITY).numpy()
+            threshold_mortality_adjusted = calibrate_probability(
+                THRESHOLD_MORTALITY_FULL, BETA_MORTALITY
             )
 
             readmission_high_risk = bool(readmission_prob >= threshold_readmit_adjusted)
