@@ -399,7 +399,7 @@ def read_root():
 
 
 @app.post("/predict/")
-async def predict(data: PatientData):
+def predict(data: PatientData):
     """
     Predicts both 30-day mortality and readmission risk for a patient.
 
@@ -694,7 +694,7 @@ def predict_icd_only(icd_codes: list[str]) -> dict:
 
 
 @app.post("/predict_flex/")
-async def predict_flex(data: PatientDataFlex):
+def predict_flex(data: PatientDataFlex):
     """
     Flexible prediction endpoint that routes to appropriate model based on available data.
 
@@ -885,7 +885,7 @@ async def predict_flex(data: PatientDataFlex):
 
 
 @app.get("/search_icd/")
-async def search_icd(q: str, limit: int = 50):
+def search_icd(q: str, limit: int = 50):
     """
     Searches for ICD-10 codes and their descriptions.
 
@@ -1034,7 +1034,7 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, Any]:
 
 
 @app.post("/parse_icd_codes/")
-async def parse_icd_codes(data: dict):
+def parse_icd_codes(data: dict):
     """
     Parse ICD codes from pasted text with flexible format support.
 
