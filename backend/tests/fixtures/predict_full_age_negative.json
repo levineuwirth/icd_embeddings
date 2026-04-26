@@ -1,0 +1,34 @@
+{
+  "request": {
+    "json": {
+      "age": -1,
+      "female": 1,
+      "icd_codes": [
+        "I10"
+      ],
+      "pay1": 1,
+      "zipinc_qrtl": 1
+    },
+    "method": "POST",
+    "path": "/predict/"
+  },
+  "response": {
+    "json": {
+      "detail": [
+        {
+          "ctx": {
+            "ge": 0
+          },
+          "input": -1,
+          "loc": [
+            "body",
+            "age"
+          ],
+          "msg": "Input should be greater than or equal to 0",
+          "type": "greater_than_equal"
+        }
+      ]
+    },
+    "status": 422
+  }
+}

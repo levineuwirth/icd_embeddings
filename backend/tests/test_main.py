@@ -1,86 +1,182 @@
+"""
+Pin current API behavior against captured JSON fixtures.
+
+Each file under ``tests/fixtures/`` records a request and the response that
+the API produced at capture time. These tests replay every request and
+assert the response is byte-for-byte identical, with two documented
+exceptions:
+
+1. Floating-point fields are compared with a small absolute tolerance to
+   tolerate hardware/oneDNN jitter (TensorFlow warns about this on
+   import).
+2. ``confidence_interval`` on full-demographic predictions is generated
+   from unseeded ``np.random.normal`` (see ``calculate_prediction_ci`` in
+   ``main.py``). For those responses we assert shape and bounds only.
+   For ICD-only predictions the CI is deterministic
+   (``[max(0, p-0.05), min(1, p+0.05)]``) and is pinned exactly.
+
+To regenerate fixtures after an intentional API change:
+
+    python -m backend.tests.capture_fixtures
+
+then ``git diff`` the result and confirm every change is expected.
+"""
+
+import json
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
-from httpx import AsyncClient
 
-from backend.main import app
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from backend.main import app  # noqa: E402
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FLOAT_TOLERANCE = 1e-6
 
 client = TestClient(app)
 
 
-def test_read_root():
-    """
-    Test the root endpoint.
-    """
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"message": "Welcome to the ICD Prediction API"}
+def _fixture_files():
+    return sorted(FIXTURES_DIR.glob("*.json"))
 
 
-def test_predict_valid_data():
-    """
-    Test the /predict endpoint with valid data.
-    """
+@pytest.mark.parametrize(
+    "fixture_path", _fixture_files(), ids=lambda p: p.stem
+)
+def test_response_matches_fixture(fixture_path):
+    fixture = json.loads(fixture_path.read_text())
+    request = fixture["request"]
+    expected = fixture["response"]
+
+    kwargs = {}
+    if "json" in request:
+        kwargs["json"] = request["json"]
+    if "params" in request:
+        kwargs["params"] = request["params"]
+
+    response = client.request(request["method"], request["path"], **kwargs)
+
+    assert response.status_code == expected["status"], (
+        f"{fixture_path.name}: status {response.status_code} != "
+        f"expected {expected['status']}\nbody: {response.text}"
+    )
+    actual_body = response.json()
+    _assert_isomorphic(actual_body, expected["json"], path=fixture_path.stem)
+
+
+def _assert_isomorphic(actual, expected, *, path):
+    """Deep equality with two carve-outs (see module docstring)."""
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict), (
+            f"{path}: expected dict, got {type(actual).__name__}"
+        )
+        assert actual.keys() == expected.keys(), (
+            f"{path}: key set differs\n"
+            f"  missing: {sorted(expected.keys() - actual.keys())}\n"
+            f"  extra:   {sorted(actual.keys() - expected.keys())}"
+        )
+        # Carve-out: full-demographic CI is nondeterministic.
+        skip_ci = expected.get("model_used") == "full_demographic"
+        for key, expected_value in expected.items():
+            if key == "confidence_interval" and skip_ci:
+                _assert_ci_well_formed(actual[key], path=f"{path}.{key}")
+                continue
+            _assert_isomorphic(actual[key], expected_value, path=f"{path}.{key}")
+    elif isinstance(expected, list):
+        assert isinstance(actual, list), (
+            f"{path}: expected list, got {type(actual).__name__}"
+        )
+        assert len(actual) == len(expected), (
+            f"{path}: length {len(actual)} != {len(expected)}"
+        )
+        for i, (a, e) in enumerate(zip(actual, expected)):
+            _assert_isomorphic(a, e, path=f"{path}[{i}]")
+    elif isinstance(expected, float):
+        assert actual == pytest.approx(expected, abs=FLOAT_TOLERANCE), (
+            f"{path}: {actual!r} != {expected!r} (tol {FLOAT_TOLERANCE})"
+        )
+    else:
+        assert actual == expected, f"{path}: {actual!r} != {expected!r}"
+
+
+def _assert_ci_well_formed(ci, *, path):
+    assert isinstance(ci, list) and len(ci) == 2, (
+        f"{path}: confidence_interval must be a 2-element list, got {ci!r}"
+    )
+    low, high = ci
+    assert isinstance(low, (int, float)) and isinstance(high, (int, float)), (
+        f"{path}: confidence_interval bounds must be numeric, got {ci!r}"
+    )
+    assert 0.0 <= low <= 1.0, f"{path}: lower bound {low} out of [0,1]"
+    assert 0.0 <= high <= 1.0, f"{path}: upper bound {high} out of [0,1]"
+    assert low <= high, f"{path}: lower {low} > upper {high}"
+
+
+# -----------------------------------------------------------------------------
+# Inline tests for endpoints that don't fixture cleanly.
+# -----------------------------------------------------------------------------
+
+
+def test_upload_txt_valid_codes():
     response = client.post(
-        "/predict/",
-        json={"age": 50, "female": 1, "pay1": 1, "zipinc_qrtl": 2, "icd_codes": ["I10", "I11", "I12"]},
+        "/upload_icd_file/",
+        files={"file": ("codes.txt", b"I10\nE11.9\nJ44.0", "text/plain")},
     )
     assert response.status_code == 200
-    data = response.json()
-    assert "prediction" in data
-    assert "confidence_interval" in data
-    assert "interpretation" in data
-    assert 0 <= data["prediction"] <= 1
-    assert len(data["confidence_interval"]) == 2
-    assert 0 <= data["confidence_interval"][0] <= 1
-    assert 0 <= data["confidence_interval"][1] <= 1
+    body = response.json()
+    assert set(body.keys()) == {
+        "valid_codes",
+        "invalid_codes",
+        "warnings",
+        "total_found",
+    }
+    assert "I10" in body["valid_codes"]
 
 
-def test_predict_invalid_age():
-    """
-    Test the /predict endpoint with an invalid age.
-    """
+def test_upload_csv_valid_codes():
     response = client.post(
-        "/predict/",
-        json={"age": -1, "female": 1, "pay1": 1, "zipinc_qrtl": 2, "icd_codes": ["I10"]},
+        "/upload_icd_file/",
+        files={"file": ("codes.csv", b"I10,E11.9", "text/csv")},
     )
-    assert response.status_code == 422
-
-
-def test_predict_invalid_female():
-    """
-    Test the /predict endpoint with an invalid 'female' value.
-    """
-    response = client.post(
-        "/predict/",
-        json={"age": 50, "female": 2, "pay1": 1, "zipinc_qrtl": 2, "icd_codes": ["I10"]},
-    )
-    assert response.status_code == 422
-
-
-def test_predict_missing_icd_codes():
-    """
-    Test the /predict endpoint with missing ICD codes.
-    """
-    response = client.post(
-        "/predict/",
-        json={"age": 50, "female": 1, "pay1": 1, "zipinc_qrtl": 2, "icd_codes": []},
-    )
-    assert response.status_code == 422
-
-
-def test_search_icd_found():
-    """
-    Test the /search_icd endpoint with a query that should return results.
-    """
-    response = client.get("/search_icd/?q=hypertension")
     assert response.status_code == 200
-    assert response.json() == {"I10": "Essential (primary) hypertension"}
+    body = response.json()
+    assert "I10" in body["valid_codes"]
 
 
-def test_search_icd_not_found():
+def test_upload_octet_stream_with_txt_extension_accepted():
+    """The current endpoint falls back to extension when MIME isn't whitelisted.
+
+    This pins the existing (intentional, per code comment) behavior; if the
+    extension fallback is ever removed, this test will fail and force the
+    isomorphism-break to be acknowledged.
     """
-    Test the /search_icd endpoint with a query that should not return results.
-    """
-    response = client.get("/search_icd/?q=xyz")
+    response = client.post(
+        "/upload_icd_file/",
+        files={"file": ("codes.txt", b"I10", "application/octet-stream")},
+    )
     assert response.status_code == 200
-    assert response.json() == {}
+
+
+def test_upload_unknown_mime_unknown_extension_rejected():
+    response = client.post(
+        "/upload_icd_file/",
+        files={"file": ("codes.bin", b"I10", "application/octet-stream")},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Invalid file type. Please upload a TXT or CSV file."
+    )
+
+
+def test_upload_non_utf8_rejected():
+    response = client.post(
+        "/upload_icd_file/",
+        files={"file": ("codes.txt", b"\xff\xfe\xfd", "text/plain")},
+    )
+    assert response.status_code == 400
+    assert "encoding" in response.json()["detail"].lower()

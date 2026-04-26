@@ -1,0 +1,18 @@
+{
+  "request": {
+    "json": {
+      "icd_codes": [
+        "XYZ",
+        "ABC123"
+      ]
+    },
+    "method": "POST",
+    "path": "/predict_flex/"
+  },
+  "response": {
+    "json": {
+      "detail": "400: No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset."
+    },
+    "status": 500
+  }
+}

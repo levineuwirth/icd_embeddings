@@ -1,0 +1,22 @@
+{
+  "request": {
+    "json": {
+      "age": 50,
+      "female": 1,
+      "icd_codes": [
+        "XYZ",
+        "ABC123"
+      ],
+      "pay1": 1,
+      "zipinc_qrtl": 1
+    },
+    "method": "POST",
+    "path": "/predict/"
+  },
+  "response": {
+    "json": {
+      "detail": "400: No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset."
+    },
+    "status": 500
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "request": {
+    "json": {
+      "age": 65,
+      "female": 1,
+      "icd_codes": [
+        "E11.9",
+        "I10",
+        "J44.0"
+      ],
+      "pay1": 1,
+      "zipinc_qrtl": 3
+    },
+    "method": "POST",
+    "path": "/predict/"
+  },
+  "response": {
+    "json": {
+      "mortality": {
+        "confidence_interval": [
+          0.005476270627465539,
+          0.2129355976400088
+        ],
+        "high_risk": false,
+        "interpretation": "Low risk of 30-day mortality.",
+        "model_used": "full_demographic",
+        "prediction": 0.0005071241175755858,
+        "raw_prediction": 0.11572474241256714,
+        "threshold_used": 0.0038874547462910414
+      },
+      "readmission": {
+        "confidence_interval": [
+          0.38120825594741536,
+          0.5637563564191892
+        ],
+        "high_risk": false,
+        "interpretation": "Low risk of 30-day readmission.",
+        "model_used": "full_demographic",
+        "prediction": 0.10680007934570312,
+        "raw_prediction": 0.46233895421028137,
+        "threshold_used": 0.1230216845870018
+      }
+    },
+    "status": 200
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "request": {
+    "json": {
+      "age": 65,
+      "female": 1,
+      "icd_codes": [
+        "E119",
+        "I10"
+      ]
+    },
+    "method": "POST",
+    "path": "/predict_flex/"
+  },
+  "response": {
+    "json": {
+      "mortality": {
+        "confidence_interval": [
+          0,
+          0.050433322711614895
+        ],
+        "high_risk": false,
+        "interpretation": "Low risk of 30-day mortality.",
+        "model_used": "icd_only",
+        "prediction": 0.0004333227116148919,
+        "raw_prediction": 0.10057058930397034,
+        "threshold_used": 0.003134064609184861
+      },
+      "readmission": {
+        "confidence_interval": [
+          0.010300968587398526,
+          0.11030096858739853
+        ],
+        "high_risk": false,
+        "interpretation": "Low risk of 30-day readmission.",
+        "model_used": "icd_only",
+        "prediction": 0.06030096858739853,
+        "raw_prediction": 0.31576788425445557,
+        "threshold_used": 0.1299089789390564
+      }
+    },
+    "status": 200
+  }
+}

@@ -9,7 +9,7 @@ import pickle
 import os
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -235,30 +235,30 @@ try:
     scaler_path = os.path.join(BASE_DIR, "model/full_age_scaler.pkl")
     icd_data_path = os.path.join(BASE_DIR, "data/icd10_codes.json")
 
-    print("Loading models...")
+    logger.info("Loading models...")
     model_readmit = load_model(readmit_model_path)
-    print(f"  Readmission model loaded: {model_readmit.name}")
+    logger.info(f"  Readmission model loaded: {model_readmit.name}")
 
     model_mortality = load_model(mortality_model_path)
-    print(f"  Mortality model loaded: {model_mortality.name}")
+    logger.info(f"  Mortality model loaded: {model_mortality.name}")
 
     model_readmit_icd_only = load_model(readmit_icd_only_path)
-    print(f"  Readmission ICD-only model loaded: {model_readmit_icd_only.name}")
+    logger.info(f"  Readmission ICD-only model loaded: {model_readmit_icd_only.name}")
 
     model_mortality_icd_only = load_model(mortality_icd_only_path)
-    print(f"  Mortality ICD-only model loaded: {model_mortality_icd_only.name}")
+    logger.info(f"  Mortality ICD-only model loaded: {model_mortality_icd_only.name}")
 
     with open(encoder_path, "rb") as file:
         encoder = pickle.load(file)
-    print(f"  ICD encoder loaded: {len(encoder.classes_)} unique codes")
+    logger.info(f"  ICD encoder loaded: {len(encoder.classes_)} unique codes")
 
     with open(scaler_path, "rb") as file:
         age_scaler = pickle.load(file)
-    print(f"  Age scaler loaded")
+    logger.info("  Age scaler loaded")
 
     with open(icd_data_path, "r", encoding="utf-8") as file:
         icd_codes = json.load(file)
-    print(f"  ICD-10 search database loaded: {len(icd_codes)} codes")
+    logger.info(f"  ICD-10 search database loaded: {len(icd_codes)} codes")
 
 except FileNotFoundError as e:
     raise RuntimeError(
@@ -362,26 +362,6 @@ def calibrate_probability(p_sampled, beta, eps=1e-8):
     """
     p_sampled = tf.clip_by_value(p_sampled, eps, 1 - eps)
     return p_sampled / (p_sampled + (1 - p_sampled) / beta)
-
-
-def get_risk_interpretation(prediction: float) -> str:
-    """
-    Provides a brief interpretation of the prediction risk.
-
-    Args:
-        prediction (float): The predicted probability.
-
-    Returns:
-        str: A string interpreting the risk level.
-    """
-    if prediction < 0.2:
-        return "Low risk of 30-day readmission."
-    elif prediction < 0.5:
-        return "Moderate risk of 30-day readmission. Clinical discretion is advised."
-    else:
-        return (
-            "High risk of 30-day readmission. Consider intervention to mitigate risk."
-        )
 
 
 def calculate_prediction_ci(model, inputs, n_bootstraps=100, ci=0.95):
@@ -971,7 +951,7 @@ async def search_icd(q: str, limit: int = 50):
     return results
 
 
-def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
+def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, Any]:
     """
     Flexibly parse ICD codes from text supporting multiple formats.
 

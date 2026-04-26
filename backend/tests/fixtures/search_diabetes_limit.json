@@ -1,0 +1,40 @@
+{
+  "request": {
+    "method": "GET",
+    "params": {
+      "limit": 5,
+      "q": "diabetes"
+    },
+    "path": "/search_icd/"
+  },
+  "response": {
+    "json": [
+      {
+        "code": "E08.00",
+        "description": "Diabetes mellitus due to underlying condition with hyperosmolarity without nonketotic hyperglycemic-hyperosmolar coma (NKHHC)",
+        "in_training_dataset": true
+      },
+      {
+        "code": "E08.01",
+        "description": "Diabetes mellitus due to underlying condition with hyperosmolarity with coma",
+        "in_training_dataset": true
+      },
+      {
+        "code": "E08.10",
+        "description": "Diabetes mellitus due to underlying condition with ketoacidosis without coma",
+        "in_training_dataset": true
+      },
+      {
+        "code": "E08.11",
+        "description": "Diabetes mellitus due to underlying condition with ketoacidosis with coma",
+        "in_training_dataset": true
+      },
+      {
+        "code": "E08.21",
+        "description": "Diabetes mellitus due to underlying condition with diabetic nephropathy",
+        "in_training_dataset": true
+      }
+    ],
+    "status": 200
+  }
+}

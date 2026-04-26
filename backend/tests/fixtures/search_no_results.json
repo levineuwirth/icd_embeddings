@@ -1,0 +1,13 @@
+{
+  "request": {
+    "method": "GET",
+    "params": {
+      "q": "xyzzyqq"
+    },
+    "path": "/search_icd/"
+  },
+  "response": {
+    "json": [],
+    "status": 200
+  }
+}

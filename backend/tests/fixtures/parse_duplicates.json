@@ -1,0 +1,23 @@
+{
+  "request": {
+    "json": {
+      "text": "I10, I10, I10, E11.9"
+    },
+    "method": "POST",
+    "path": "/parse_icd_codes/"
+  },
+  "response": {
+    "json": {
+      "invalid_codes": [],
+      "total_found": 2,
+      "valid_codes": [
+        "I10",
+        "E11.9"
+      ],
+      "warnings": [
+        "Removed 2 duplicate codes."
+      ]
+    },
+    "status": 200
+  }
+}

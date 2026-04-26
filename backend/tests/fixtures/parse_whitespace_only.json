@@ -1,0 +1,15 @@
+{
+  "request": {
+    "json": {
+      "text": "   \n\t  "
+    },
+    "method": "POST",
+    "path": "/parse_icd_codes/"
+  },
+  "response": {
+    "json": {
+      "detail": "No text provided"
+    },
+    "status": 400
+  }
+}

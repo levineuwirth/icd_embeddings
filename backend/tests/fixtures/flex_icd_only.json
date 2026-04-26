@@ -1,0 +1,42 @@
+{
+  "request": {
+    "json": {
+      "icd_codes": [
+        "E119",
+        "I10",
+        "J440"
+      ]
+    },
+    "method": "POST",
+    "path": "/predict_flex/"
+  },
+  "response": {
+    "json": {
+      "mortality": {
+        "confidence_interval": [
+          0,
+          0.05047070803702809
+        ],
+        "high_risk": false,
+        "interpretation": "Low risk of 30-day mortality.",
+        "model_used": "icd_only",
+        "prediction": 0.00047070803702808917,
+        "raw_prediction": 0.1083112508058548,
+        "threshold_used": 0.003134064609184861
+      },
+      "readmission": {
+        "confidence_interval": [
+          0.08595272600650787,
+          0.18595272600650786
+        ],
+        "high_risk": true,
+        "interpretation": "Low risk of 30-day readmission.",
+        "model_used": "icd_only",
+        "prediction": 0.13595272600650787,
+        "raw_prediction": 0.5308610796928406,
+        "threshold_used": 0.1299089789390564
+      }
+    },
+    "status": 200
+  }
+}

@@ -1,0 +1,264 @@
+{
+  "request": {
+    "method": "GET",
+    "params": {
+      "q": "hypertension"
+    },
+    "path": "/search_icd/"
+  },
+  "response": {
+    "json": [
+      {
+        "code": "G93.2",
+        "description": "Benign intracranial hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "H40.051",
+        "description": "Ocular hypertension, right eye",
+        "in_training_dataset": true
+      },
+      {
+        "code": "H40.052",
+        "description": "Ocular hypertension, left eye",
+        "in_training_dataset": true
+      },
+      {
+        "code": "H40.053",
+        "description": "Ocular hypertension, bilateral",
+        "in_training_dataset": true
+      },
+      {
+        "code": "H40.059",
+        "description": "Ocular hypertension, unspecified eye",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I10",
+        "description": "Essential (primary) hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I15.0",
+        "description": "Renovascular hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I15.1",
+        "description": "Hypertension secondary to other renal disorders",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I15.2",
+        "description": "Hypertension secondary to endocrine disorders",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I15.8",
+        "description": "Other secondary hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I15.9",
+        "description": "Secondary hypertension, unspecified",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.0",
+        "description": "Primary pulmonary hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.2",
+        "description": "Other secondary pulmonary hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.20",
+        "description": "Pulmonary hypertension, unspecified",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.21",
+        "description": "Secondary pulmonary arterial hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.22",
+        "description": "Pulmonary hypertension due to left heart disease",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.23",
+        "description": "Pulmonary hypertension due to lung diseases and hypoxia",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.24",
+        "description": "Chronic thromboembolic pulmonary hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I27.29",
+        "description": "Other secondary pulmonary hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.301",
+        "description": "Chronic venous hypertension (idiopathic) without complications of right lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.302",
+        "description": "Chronic venous hypertension (idiopathic) without complications of left lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.303",
+        "description": "Chronic venous hypertension (idiopathic) without complications of bilateral lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.309",
+        "description": "Chronic venous hypertension (idiopathic) without complications of unspecified lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.311",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer of right lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.312",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer of left lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.313",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer of bilateral lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.319",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer of unspecified lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.321",
+        "description": "Chronic venous hypertension (idiopathic) with inflammation of right lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.322",
+        "description": "Chronic venous hypertension (idiopathic) with inflammation of left lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.323",
+        "description": "Chronic venous hypertension (idiopathic) with inflammation of bilateral lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.329",
+        "description": "Chronic venous hypertension (idiopathic) with inflammation of unspecified lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.331",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer and inflammation of right lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.332",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer and inflammation of left lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.333",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer and inflammation of bilateral lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.339",
+        "description": "Chronic venous hypertension (idiopathic) with ulcer and inflammation of unspecified lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.391",
+        "description": "Chronic venous hypertension (idiopathic) with other complications of right lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.392",
+        "description": "Chronic venous hypertension (idiopathic) with other complications of left lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.393",
+        "description": "Chronic venous hypertension (idiopathic) with other complications of bilateral lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I87.399",
+        "description": "Chronic venous hypertension (idiopathic) with other complications of unspecified lower extremity",
+        "in_training_dataset": true
+      },
+      {
+        "code": "I97.3",
+        "description": "Postprocedural hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "K76.6",
+        "description": "Portal hypertension",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.011",
+        "description": "Pre-existing essential hypertension complicating pregnancy, first trimester",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.012",
+        "description": "Pre-existing essential hypertension complicating pregnancy, second trimester",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.013",
+        "description": "Pre-existing essential hypertension complicating pregnancy, third trimester",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.019",
+        "description": "Pre-existing essential hypertension complicating pregnancy, unspecified trimester",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.02",
+        "description": "Pre-existing essential hypertension complicating childbirth",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.03",
+        "description": "Pre-existing essential hypertension complicating the puerperium",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.411",
+        "description": "Pre-existing secondary hypertension complicating pregnancy, first trimester",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.412",
+        "description": "Pre-existing secondary hypertension complicating pregnancy, second trimester",
+        "in_training_dataset": true
+      },
+      {
+        "code": "O10.413",
+        "description": "Pre-existing secondary hypertension complicating pregnancy, third trimester",
+        "in_training_dataset": true
+      }
+    ],
+    "status": 200
+  }
+}
