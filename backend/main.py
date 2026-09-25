@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-import numpy as np
 import pandas as pd
 import tensorflow as tf
 from keras.models import load_model
@@ -266,12 +265,35 @@ except FileNotFoundError as e:
     ) from e
 
 
+MIN_AGE = 18
+
+
+def _validate_age(v: int) -> int:
+    """
+    Validate age according to the training cohort:
+    - Ages under 18 are rejected: the NRD cohort was adults only
+    - Ages 90-124 are capped at 90 (the dataset lumps these together)
+    - Ages 125+ are rejected
+    """
+    if v < MIN_AGE:
+        raise ValueError(
+            f"Age must be {MIN_AGE} or older: the models were trained on adult discharges."
+        )
+    if v >= 125:
+        raise ValueError("Age cannot be 125 or greater.")
+    if 90 <= v <= 124:
+        return 90
+    return v
+
+
 class PatientData(BaseModel):
     """
     Pydantic model for validating patient data input.
     """
 
-    age: int = Field(..., ge=0, description="Patient's age must be 0 or greater.")
+    age: int = Field(
+        ..., description="Patient's age; the models were trained on adults (18+)."
+    )
     female: int = Field(
         ..., ge=0, le=1, description="Patient's gender (0 for male, 1 for female)."
     )
@@ -286,19 +308,7 @@ class PatientData(BaseModel):
     @field_validator("age")
     @classmethod
     def validate_age(cls, v):
-        """
-        Validate age according to dataset constraints:
-        - Age cannot be less than 0
-        - Ages 90-124 are capped at 90 (dataset lumps these together)
-        - Ages 125+ are rejected
-        """
-        if v < 0:
-            raise ValueError("Age cannot be less than 0.")
-        if v >= 125:
-            raise ValueError("Age cannot be 125 or greater.")
-        if 90 <= v <= 124:
-            return 90
-        return v
+        return _validate_age(v)
 
 
 class PatientDataFlex(BaseModel):
@@ -330,21 +340,7 @@ class PatientDataFlex(BaseModel):
     @field_validator("age")
     @classmethod
     def validate_age(cls, v):
-        """
-        Validate age according to dataset constraints (when provided):
-        - Age cannot be less than 0
-        - Ages 90-124 are capped at 90 (dataset lumps these together)
-        - Ages 125+ are rejected
-        """
-        if v is None:
-            return v
-        if v < 0:
-            raise ValueError("Age cannot be less than 0.")
-        if v >= 125:
-            raise ValueError("Age cannot be 125 or greater.")
-        if 90 <= v <= 124:
-            return 90
-        return v
+        return None if v is None else _validate_age(v)
 
 
 def calibrate_probability(p_sampled, beta: float, eps: float = 1e-8) -> float:
@@ -354,9 +350,9 @@ def calibrate_probability(p_sampled, beta: float, eps: float = 1e-8) -> float:
     Args:
         p_sampled: probability from a model trained on undersampled data
             (Python float or any numeric coercible to one).
-        beta: undersampling ratio = (# majority kept) / (# majority original),
-            equivalently the original positive rate when training was
-            balanced 50/50.
+        beta: undersampling ratio = (# majority kept) / (# majority original).
+            When training was balanced 1:1 this equals the original odds of
+            the positive class, N+ / N-, not its rate N+ / N.
         eps: small constant to avoid division by zero at the boundaries.
 
     Returns:
@@ -364,30 +360,6 @@ def calibrate_probability(p_sampled, beta: float, eps: float = 1e-8) -> float:
     """
     p = min(max(float(p_sampled), eps), 1 - eps)
     return p / (p + (1 - p) / beta)
-
-
-def calculate_prediction_ci(model, inputs, n_bootstraps=100, ci=0.95):
-    """
-    Calculates the 95% confidence interval for a single prediction using bootstrapping.
-
-    Args:
-        model: The trained Keras model.
-        inputs: The preprocessed input data for the model.
-        n_bootstraps (int): The number of bootstrap samples to generate.
-        ci (float): The confidence interval level.
-
-    Returns:
-        tuple: A tuple containing the lower and upper bounds of the confidence interval.
-    """
-    predictions = []
-    for _ in range(n_bootstraps):
-        pred = model.predict(inputs, verbose=0).flatten()[0]
-        noise = np.random.normal(0, 0.05)
-        predictions.append(pred + noise)
-
-    lower_bound = np.percentile(predictions, (1 - ci) / 2 * 100)
-    upper_bound = np.percentile(predictions, (1 + ci) / 2 * 100)
-    return max(0, lower_bound), min(1, upper_bound)
 
 
 @app.get("/")
@@ -402,29 +374,31 @@ def _build_outcome_section(
     *,
     prediction: float,
     raw_prediction,
-    ci: tuple,
     high_risk: bool,
     threshold: float,
     outcome: str,
     model_used: str,
 ) -> dict:
-    """Render one outcome section (readmission or mortality) of a prediction response."""
-    if prediction < 0.2:
-        interpretation = f"Low risk of 30-day {outcome}."
-    elif high_risk:
+    """Render one outcome section (readmission or mortality) of a prediction response.
+
+    The interpretation follows ``high_risk``, the comparison with the model's
+    Youden threshold, so it cannot disagree with the flag. (It used to key on
+    a fixed 0.2, which read "Low risk" for every flagged mortality prediction:
+    the calibrated mortality threshold is about 0.4%.)
+    """
+    if high_risk:
         interpretation = (
-            f"High risk of 30-day {outcome}. "
-            "Consider intervention to mitigate risk."
+            f"High risk of 30-day {outcome}: at or above the model's "
+            f"threshold of {threshold:.2%}."
         )
     else:
         interpretation = (
-            f"Moderate risk of 30-day {outcome}. "
-            "Clinical discretion is advised."
+            f"Low risk of 30-day {outcome}: below the model's "
+            f"threshold of {threshold:.2%}."
         )
     return {
         "prediction": float(prediction),
         "raw_prediction": float(raw_prediction),
-        "confidence_interval": [float(ci[0]), float(ci[1])],
         "interpretation": interpretation,
         "model_used": model_used,
         "high_risk": high_risk,
@@ -439,11 +413,14 @@ def _run_prediction(
     """
     Run prediction for ``icd_codes``, with or without demographic features.
 
-    When ``demographics`` is None, the demographics-free models are used and
-    the confidence interval collapses to a deterministic ±0.05 band. When
-    a demographics dict is provided (keys: age, female, pay1, zipinc_qrtl),
-    the full models run and the CI is bootstrapped from
-    ``calculate_prediction_ci``.
+    When ``demographics`` is None, the demographics-free models are used;
+    when a demographics dict is provided (keys: age, female, pay1,
+    zipinc_qrtl), the full models run.
+
+    There is no confidence interval. The one this returned before was 100
+    identical forward passes plus N(0, 0.05) noise around the uncalibrated
+    score (or a fixed ±0.05 band), which measured nothing, and it cost about
+    200 forward passes per full-demographic request.
 
     Raises ``HTTPException(400)`` if every non-empty code maps to the
     encoder's NAN sentinel, matching the legacy guard.
@@ -470,7 +447,8 @@ def _run_prediction(
     )
     icd_columns = [f"I10_DX{i}" for i in range(1, 41)]
 
-    logger.info(f"Prediction request ({model_used}) - incoming codes: {icd_codes}")
+    # Inputs are not stored: log how many codes arrived, never which.
+    logger.info(f"Prediction request ({model_used}) - {len(icd_codes)} codes")
 
     codes_mapped_to_nan = []
     for col in icd_columns:
@@ -481,7 +459,7 @@ def _run_prediction(
         if df[col].values[0] == unknown_label_int and original_code != "":
             codes_mapped_to_nan.append(original_code)
     if codes_mapped_to_nan:
-        logger.warning(f"Codes mapped to NAN: {codes_mapped_to_nan}")
+        logger.warning(f"{len(codes_mapped_to_nan)} codes mapped to NAN")
 
     non_empty_codes = df[icd_columns].values[0][: len(icd_codes)]
     if len(non_empty_codes) > 0 and all(
@@ -537,19 +515,6 @@ def _run_prediction(
     readmission_high_risk = bool(readmission_prob >= readmit_threshold)
     mortality_high_risk = bool(mortality_prob >= mortality_threshold)
 
-    if use_full:
-        readmission_ci = calculate_prediction_ci(readmit_model, model_inputs)
-        mortality_ci = calculate_prediction_ci(mortality_model, model_inputs)
-    else:
-        readmission_ci = (
-            max(0, readmission_prob - 0.05),
-            min(1, readmission_prob + 0.05),
-        )
-        mortality_ci = (
-            max(0, mortality_prob - 0.05),
-            min(1, mortality_prob + 0.05),
-        )
-
     logger.info(
         f"Prediction successful ({model_used}) - "
         f"Readmission: {readmission_prob:.4f}, Mortality: {mortality_prob:.4f}"
@@ -559,7 +524,6 @@ def _run_prediction(
         "readmission": _build_outcome_section(
             prediction=readmission_prob,
             raw_prediction=readmission_raw,
-            ci=readmission_ci,
             high_risk=readmission_high_risk,
             threshold=readmit_threshold,
             outcome="readmission",
@@ -568,7 +532,6 @@ def _run_prediction(
         "mortality": _build_outcome_section(
             prediction=mortality_prob,
             raw_prediction=mortality_raw,
-            ci=mortality_ci,
             high_risk=mortality_high_risk,
             threshold=mortality_threshold,
             outcome="mortality",
@@ -590,6 +553,8 @@ def predict(data: PatientData):
                 "zipinc_qrtl": data.zipinc_qrtl,
             },
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -613,6 +578,8 @@ def predict_flex(data: PatientDataFlex):
             else None
         )
         return _run_prediction(data.icd_codes, demographics=demographics)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -3,17 +3,12 @@ Pin current API behavior against captured JSON fixtures.
 
 Each file under ``tests/fixtures/`` records a request and the response that
 the API produced at capture time. These tests replay every request and
-assert the response is byte-for-byte identical, with two documented
-exceptions:
+assert the response is byte-for-byte identical, except that floating-point
+fields are compared with a small absolute tolerance to tolerate
+hardware/oneDNN jitter (TensorFlow warns about this on import).
 
-1. Floating-point fields are compared with a small absolute tolerance to
-   tolerate hardware/oneDNN jitter (TensorFlow warns about this on
-   import).
-2. ``confidence_interval`` on full-demographic predictions is generated
-   from unseeded ``np.random.normal`` (see ``calculate_prediction_ci`` in
-   ``main.py``). For those responses we assert shape and bounds only.
-   For ICD-only predictions the CI is deterministic
-   (``[max(0, p-0.05), min(1, p+0.05)]``) and is pinned exactly.
+Every prediction is deterministic: the randomised ``confidence_interval``
+that needed a carve-out here was removed in September 2026.
 
 To regenerate fixtures after an intentional API change:
 
@@ -70,7 +65,7 @@ def test_response_matches_fixture(fixture_path):
 
 
 def _assert_isomorphic(actual, expected, *, path):
-    """Deep equality with two carve-outs (see module docstring)."""
+    """Deep equality with a float tolerance (see module docstring)."""
     if isinstance(expected, dict):
         assert isinstance(actual, dict), (
             f"{path}: expected dict, got {type(actual).__name__}"
@@ -80,12 +75,7 @@ def _assert_isomorphic(actual, expected, *, path):
             f"  missing: {sorted(expected.keys() - actual.keys())}\n"
             f"  extra:   {sorted(actual.keys() - expected.keys())}"
         )
-        # Carve-out: full-demographic CI is nondeterministic.
-        skip_ci = expected.get("model_used") == "full_demographic"
         for key, expected_value in expected.items():
-            if key == "confidence_interval" and skip_ci:
-                _assert_ci_well_formed(actual[key], path=f"{path}.{key}")
-                continue
             _assert_isomorphic(actual[key], expected_value, path=f"{path}.{key}")
     elif isinstance(expected, list):
         assert isinstance(actual, list), (
@@ -102,19 +92,6 @@ def _assert_isomorphic(actual, expected, *, path):
         )
     else:
         assert actual == expected, f"{path}: {actual!r} != {expected!r}"
-
-
-def _assert_ci_well_formed(ci, *, path):
-    assert isinstance(ci, list) and len(ci) == 2, (
-        f"{path}: confidence_interval must be a 2-element list, got {ci!r}"
-    )
-    low, high = ci
-    assert isinstance(low, (int, float)) and isinstance(high, (int, float)), (
-        f"{path}: confidence_interval bounds must be numeric, got {ci!r}"
-    )
-    assert 0.0 <= low <= 1.0, f"{path}: lower bound {low} out of [0,1]"
-    assert 0.0 <= high <= 1.0, f"{path}: upper bound {high} out of [0,1]"
-    assert low <= high, f"{path}: lower {low} > upper {high}"
 
 
 # -----------------------------------------------------------------------------
@@ -180,3 +157,76 @@ def test_upload_non_utf8_rejected():
     )
     assert response.status_code == 400
     assert "encoding" in response.json()["detail"].lower()
+
+
+# -----------------------------------------------------------------------------
+# Regressions (September 2026).
+# -----------------------------------------------------------------------------
+
+FULL_BODY = {"age": 65, "female": 1, "pay1": 1, "zipinc_qrtl": 3,
+             "icd_codes": ["E119", "I10", "J440"]}
+
+
+def test_codes_never_reach_the_log(caplog):
+    """The README and paper say inputs are not stored; the log used to
+    record every request's codes at INFO, and unknown ones at WARNING."""
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    codes = ["E119", "I10", "QQ999"]
+    client.post("/predict_flex/", json={"icd_codes": codes})
+    client.post("/predict/", json={**FULL_BODY, "icd_codes": codes})
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "Prediction request" in logged, "request logging disappeared entirely"
+    for code in codes:
+        assert code not in logged, f"code {code} was logged"
+
+
+def test_no_confidence_interval():
+    """The interval was noise around the uncalibrated score; it is gone."""
+    for path, body in (("/predict/", FULL_BODY),
+                       ("/predict_flex/", {"icd_codes": FULL_BODY["icd_codes"]})):
+        response = client.post(path, json=body)
+        assert response.status_code == 200
+        for outcome in ("readmission", "mortality"):
+            assert "confidence_interval" not in response.json()[outcome]
+
+
+def test_full_prediction_is_deterministic():
+    first = client.post("/predict/", json=FULL_BODY).json()
+    second = client.post("/predict/", json=FULL_BODY).json()
+    assert first == second
+
+
+def test_interpretation_follows_high_risk_flag():
+    """A flagged mortality prediction is far below 0.2; the text used to
+    call it low risk because it keyed on 0.2, not on the threshold."""
+    from backend.main import _build_outcome_section
+
+    flagged = _build_outcome_section(
+        prediction=0.006, raw_prediction=0.61, high_risk=True,
+        threshold=0.0039, outcome="mortality", model_used="full_demographic",
+    )
+    assert flagged["interpretation"].startswith("High risk of 30-day mortality")
+    unflagged = _build_outcome_section(
+        prediction=0.15, raw_prediction=0.49, high_risk=False,
+        threshold=0.1224, outcome="readmission", model_used="full_demographic",
+    )
+    assert unflagged["interpretation"].startswith("Low risk of 30-day readmission")
+
+
+@pytest.mark.parametrize("path", ["/predict/", "/predict_flex/"])
+def test_minors_rejected(path):
+    """The cohort was adults (18+); ages 0-17 used to be accepted."""
+    response = client.post(path, json={**FULL_BODY, "age": 17})
+    assert response.status_code == 422
+    assert "18 or older" in response.text
+    assert client.post(path, json={**FULL_BODY, "age": 18}).status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/predict/", "/predict_flex/"])
+def test_all_unknown_codes_is_a_client_error(path):
+    """The handlers' catch-all turned this deliberate 400 into a 500."""
+    response = client.post(path, json={**FULL_BODY, "icd_codes": ["XYZ", "ABC123"]})
+    assert response.status_code == 400
+    assert response.json()["detail"].startswith("No valid codes")

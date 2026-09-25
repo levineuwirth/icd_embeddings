@@ -15,28 +15,20 @@
   "response": {
     "json": {
       "mortality": {
-        "confidence_interval": [
-          0.3174117307525325,
-          0.4739402690902198
-        ],
         "high_risk": false,
-        "interpretation": "Low risk of 30-day mortality.",
+        "interpretation": "Low risk of 30-day mortality: below the model's threshold of 0.39%.",
         "model_used": "full_demographic",
-        "prediction": 0.002463635755702853,
+        "prediction": 0.0024636357144319945,
         "raw_prediction": 0.3891333043575287,
-        "threshold_used": 0.0038874547462910414
+        "threshold_used": 0.003887454805792665
       },
       "readmission": {
-        "confidence_interval": [
-          0.4102075211952036,
-          0.605255839418571
-        ],
         "high_risk": true,
-        "interpretation": "Low risk of 30-day readmission.",
+        "interpretation": "High risk of 30-day readmission: at or above the model's threshold of 12.30%.",
         "model_used": "full_demographic",
-        "prediction": 0.12367958575487137,
+        "prediction": 0.12367957397885128,
         "raw_prediction": 0.5037209391593933,
-        "threshold_used": 0.1230216845870018
+        "threshold_used": 0.12302168322722243
       }
     },
     "status": 200

@@ -1,7 +1,7 @@
 {
   "request": {
     "json": {
-      "age": -1,
+      "age": 17,
       "female": 1,
       "icd_codes": [
         "I10"
@@ -19,7 +19,7 @@
           "ctx": {
             "error": {}
           },
-          "input": -1,
+          "input": 17,
           "loc": [
             "body",
             "age"

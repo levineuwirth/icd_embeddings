@@ -11,8 +11,8 @@
   },
   "response": {
     "json": {
-      "detail": "400: No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset."
+      "detail": "No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset."
     },
-    "status": 500
+    "status": 400
   }
 }

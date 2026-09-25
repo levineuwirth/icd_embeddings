@@ -116,6 +116,18 @@ def main():
         },
     )
     hit(
+        "predict_full_age_minor",
+        "POST",
+        "/predict/",
+        json_body={
+            "age": 17,
+            "female": 1,
+            "pay1": 1,
+            "zipinc_qrtl": 1,
+            "icd_codes": ["I10"],
+        },
+    )
+    hit(
         "predict_full_age_too_high",
         "POST",
         "/predict/",
