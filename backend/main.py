@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
+import numpy as np
 import pandas as pd
 import tensorflow as tf
 from keras.models import load_model
@@ -265,20 +266,123 @@ except FileNotFoundError as e:
     ) from e
 
 
+# -----------------------------------------------------------------------------
+# Integrated Gradients: code-level explanations
+# -----------------------------------------------------------------------------
+#
+# The method of the paper's eMethods 3 and of the analysis pipeline's
+# src/feature_importance/IG.py (Rice-wxl/icd-10-embedding): the baseline is an
+# empty diagnosis list, every slot holding the NAN/padding embedding; the path
+# runs in IG_STEPS right-endpoint steps from it to the patient's embeddings;
+# the target is the model's logit; and gradients with respect to the code
+# embeddings are summed over the embedding dimension, giving one attribution
+# per code. Demographics are held at the patient's values.
+#
+# IG.py interpolates by assigning into the model's embedding variable. That is
+# safe offline and unsafe here, where requests run concurrently on a thread
+# pool, so each model is instead cut at its embedding output and the
+# interpolated embeddings are fed through the sub-model as one batch.
+
+IG_STEPS = 32
+IG_LOGIT_EPS = 1e-6  # IG.py's clip before taking the logit
+
+
+def _embedding_submodel(model):
+    """(sub-model from the ICD embedding output onward, embedding table)."""
+    embedding = model.get_layer("icd_embedding")
+    other_inputs = [i for i in model.inputs if i.name != "icd_codes"]
+    sub = tf.keras.Model(inputs=[embedding.output] + other_inputs, outputs=model.output)
+    return sub, embedding.embeddings
+
+
+IG_SUBMODELS = {
+    id(m): _embedding_submodel(m)
+    for m in (model_readmit, model_mortality, model_readmit_icd_only, model_mortality_icd_only)
+}
+
+
+def _logit(p):
+    p = tf.clip_by_value(p, IG_LOGIT_EPS, 1.0 - IG_LOGIT_EPS)
+    return tf.math.log(p) - tf.math.log1p(-p)
+
+
+def integrated_gradients(model, code_ids, other_inputs, pad_id):
+    """
+    Integrated Gradients for one patient.
+
+    Args:
+        model: one of the four served models.
+        code_ids: the 40 encoded diagnosis slots (padding included).
+        other_inputs: the model's remaining inputs for this patient, in model
+            order (empty for the ICD-only models), each of batch size 1.
+        pad_id: the encoder's NAN id, whose embedding fills empty slots.
+
+    Returns:
+        (per-slot attributions, logit at the input, logit at the baseline).
+        The attributions sum to approximately the difference of the two
+        logits; the remainder is the IG_STEPS-step approximation error.
+    """
+    sub, table = IG_SUBMODELS[id(model)]
+    ids = tf.constant(np.asarray(code_ids, dtype=np.int32))
+    x = tf.gather(table, ids)                                   # (40, D)
+    x0 = tf.repeat(tf.gather(table, [pad_id]), len(code_ids), axis=0)
+    delta = x - x0
+    alphas = tf.reshape(tf.range(1, IG_STEPS + 1, dtype=tf.float32) / IG_STEPS, (-1, 1, 1))
+    path = x0[None] + alphas * delta[None]                      # (steps, 40, D)
+    extra = [
+        tf.repeat(tf.reshape(tf.cast(v, tf.float32), (1, 1)), IG_STEPS, axis=0)
+        for v in other_inputs
+    ]
+    with tf.GradientTape() as tape:
+        tape.watch(path)
+        logits = _logit(tf.reshape(sub([path] + extra, training=False), (-1,)))
+        total = tf.reduce_sum(logits)
+    grads = tape.gradient(total, path)
+    per_slot = tf.reduce_sum(delta * tf.reduce_mean(grads, axis=0), axis=1)
+    baseline_out = sub([x0[None]] + [e[:1] for e in extra], training=False)
+    baseline_logit = _logit(tf.reshape(baseline_out, (-1,)))[0]
+    return per_slot.numpy(), float(logits[-1]), float(baseline_logit)
+
+
+def _explanation(model, code_ids, other_inputs, pad_id, input_codes, beta):
+    """The explanation section of one outcome's response.
+
+    Log-odds are reported on the calibrated scale. Calibration adds log(beta)
+    to the logit, so attributions, which are differences, are the same on
+    either scale.
+    """
+    per_slot, logit_x, logit_0 = integrated_gradients(model, code_ids, other_inputs, pad_id)
+    contributions: Dict[str, float] = {}
+    for i, code in enumerate(input_codes):
+        if code_ids[i] == pad_id:
+            continue  # unknown to the model: it sees an empty slot
+        contributions[code] = contributions.get(code, 0.0) + float(per_slot[i])
+    ranked = sorted(contributions.items(), key=lambda kv: -abs(kv[1]))
+    shift = float(np.log(beta))
+    return {
+        "method": "integrated_gradients",
+        "baseline": "empty_diagnosis_list",
+        "steps": IG_STEPS,
+        "log_odds": logit_x + shift,
+        "baseline_log_odds": logit_0 + shift,
+        "completeness_gap": float(np.sum(per_slot)) - (logit_x - logit_0),
+        "contributions": [{"code": c, "attribution": a} for c, a in ranked],
+    }
+
+
 MIN_AGE = 18
 
 
 def _validate_age(v: int) -> int:
     """
-    Validate age according to the training cohort:
-    - Ages under 18 are rejected: the NRD cohort was adults only
+    Validate age:
+    - Ages under 18 are rejected: the paper reports an adult cohort, and the
+      calculator is scoped to adults
     - Ages 90-124 are capped at 90 (the dataset lumps these together)
     - Ages 125+ are rejected
     """
     if v < MIN_AGE:
-        raise ValueError(
-            f"Age must be {MIN_AGE} or older: the models were trained on adult discharges."
-        )
+        raise ValueError(f"This calculator is for adults ({MIN_AGE} and older).")
     if v >= 125:
         raise ValueError("Age cannot be 125 or greater.")
     if 90 <= v <= 124:
@@ -291,9 +395,7 @@ class PatientData(BaseModel):
     Pydantic model for validating patient data input.
     """
 
-    age: int = Field(
-        ..., description="Patient's age; the models were trained on adults (18+)."
-    )
+    age: int = Field(..., description="Patient's age; the calculator is for adults (18+).")
     female: int = Field(
         ..., ge=0, le=1, description="Patient's gender (0 for male, 1 for female)."
     )
@@ -378,6 +480,7 @@ def _build_outcome_section(
     threshold: float,
     outcome: str,
     model_used: str,
+    explanation: dict,
 ) -> dict:
     """Render one outcome section (readmission or mortality) of a prediction response.
 
@@ -403,6 +506,7 @@ def _build_outcome_section(
         "model_used": model_used,
         "high_risk": high_risk,
         "threshold_used": threshold,
+        "explanation": explanation,
     }
 
 
@@ -515,6 +619,18 @@ def _run_prediction(
     readmission_high_risk = bool(readmission_prob >= readmit_threshold)
     mortality_high_risk = bool(mortality_prob >= mortality_threshold)
 
+    code_ids = [int(v) for v in df[icd_columns].values[0]]
+    input_codes = [str(c).strip().upper() for c in icd_codes[:40]]
+    other_inputs = (
+        [np.asarray(v).reshape(-1)[0] for v in model_inputs[1:]] if use_full else []
+    )
+    readmission_explanation = _explanation(
+        readmit_model, code_ids, other_inputs, unknown_label_int, input_codes, BETA_READMIT
+    )
+    mortality_explanation = _explanation(
+        mortality_model, code_ids, other_inputs, unknown_label_int, input_codes, BETA_MORTALITY
+    )
+
     logger.info(
         f"Prediction successful ({model_used}) - "
         f"Readmission: {readmission_prob:.4f}, Mortality: {mortality_prob:.4f}"
@@ -528,6 +644,7 @@ def _run_prediction(
             threshold=readmit_threshold,
             outcome="readmission",
             model_used=model_used,
+            explanation=readmission_explanation,
         ),
         "mortality": _build_outcome_section(
             prediction=mortality_prob,
@@ -536,6 +653,7 @@ def _run_prediction(
             threshold=mortality_threshold,
             outcome="mortality",
             model_used=model_used,
+            explanation=mortality_explanation,
         ),
     }
 

@@ -17,6 +17,28 @@
   "response": {
     "json": {
       "mortality": {
+        "explanation": {
+          "baseline": "empty_diagnosis_list",
+          "baseline_log_odds": -7.572917714684214,
+          "completeness_gap": 0.08389288187026978,
+          "contributions": [
+            {
+              "attribution": 0.10938498377799988,
+              "code": "E11.9"
+            },
+            {
+              "attribution": -0.09335848689079285,
+              "code": "J44.0"
+            },
+            {
+              "attribution": 0.054536640644073486,
+              "code": "I10"
+            }
+          ],
+          "log_odds": -7.586247459023204,
+          "method": "integrated_gradients",
+          "steps": 32
+        },
         "high_risk": false,
         "interpretation": "Low risk of 30-day mortality: below the model's threshold of 0.39%.",
         "model_used": "full_demographic",
@@ -25,6 +47,28 @@
         "threshold_used": 0.003887454805792665
       },
       "readmission": {
+        "explanation": {
+          "baseline": "empty_diagnosis_list",
+          "baseline_log_odds": -1.977136342734231,
+          "completeness_gap": -0.016794919967651367,
+          "contributions": [
+            {
+              "attribution": -0.4649991989135742,
+              "code": "I10"
+            },
+            {
+              "attribution": 0.4258020520210266,
+              "code": "J44.0"
+            },
+            {
+              "attribution": -0.12431316822767258,
+              "code": "E11.9"
+            }
+          ],
+          "log_odds": -2.1238517453373804,
+          "method": "integrated_gradients",
+          "steps": 32
+        },
         "high_risk": false,
         "interpretation": "Low risk of 30-day readmission: below the model's threshold of 12.30%.",
         "model_used": "full_demographic",

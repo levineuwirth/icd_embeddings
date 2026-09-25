@@ -24,7 +24,7 @@
             "body",
             "age"
           ],
-          "msg": "Value error, Age must be 18 or older: the models were trained on adult discharges.",
+          "msg": "Value error, This calculator is for adults (18 and older).",
           "type": "value_error"
         }
       ]

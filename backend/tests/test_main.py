@@ -21,6 +21,8 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -206,11 +208,13 @@ def test_interpretation_follows_high_risk_flag():
     flagged = _build_outcome_section(
         prediction=0.006, raw_prediction=0.61, high_risk=True,
         threshold=0.0039, outcome="mortality", model_used="full_demographic",
+        explanation={},
     )
     assert flagged["interpretation"].startswith("High risk of 30-day mortality")
     unflagged = _build_outcome_section(
         prediction=0.15, raw_prediction=0.49, high_risk=False,
         threshold=0.1224, outcome="readmission", model_used="full_demographic",
+        explanation={},
     )
     assert unflagged["interpretation"].startswith("Low risk of 30-day readmission")
 
@@ -220,7 +224,7 @@ def test_minors_rejected(path):
     """The cohort was adults (18+); ages 0-17 used to be accepted."""
     response = client.post(path, json={**FULL_BODY, "age": 17})
     assert response.status_code == 422
-    assert "18 or older" in response.text
+    assert "adults (18 and older)" in response.text
     assert client.post(path, json={**FULL_BODY, "age": 18}).status_code == 200
 
 
@@ -230,3 +234,104 @@ def test_all_unknown_codes_is_a_client_error(path):
     response = client.post(path, json={**FULL_BODY, "icd_codes": ["XYZ", "ABC123"]})
     assert response.status_code == 400
     assert response.json()["detail"].startswith("No valid codes")
+
+
+# -----------------------------------------------------------------------------
+# Integrated Gradients (September 2026): the calculator now computes the
+# code-level explanations the paper and README describe.
+# -----------------------------------------------------------------------------
+
+IG_CODES = ["E11.9", "I10", "J44.0", "N18.6", "I50.9", "Z99.2"]
+
+
+def _encoded(codes):
+    import backend.main as m
+
+    label_to_int = {label: i for i, label in enumerate(m.encoder.classes_)}
+    pad = int(m.encoder.transform(["NAN"])[0])
+    ids = [label_to_int[c.replace(".", "")] for c in codes]
+    return label_to_int, pad, np.array([ids + [pad] * (40 - len(ids))], np.float32)
+
+
+@pytest.mark.parametrize("outcome,path_attr", [
+    ("readmission", "readmit_icd_only_path"),
+    ("mortality", "mortality_icd_only_path"),
+])
+def test_ig_matches_pipeline_algorithm_icd_only(outcome, path_attr):
+    """Batched, non-mutating IG must equal the pipeline's IG.py per code."""
+    import backend.main as m
+    from backend.tests.ig_reference import pipeline_ig
+
+    label_to_int, pad, X = _encoded(IG_CODES)
+    served = client.post("/predict_flex/", json={"icd_codes": IG_CODES}).json()
+    ours = {c["code"]: c["attribution"] for c in served[outcome]["explanation"]["contributions"]}
+    reference = pipeline_ig(getattr(m, path_attr), X, pad)
+    for code in IG_CODES:
+        assert ours[code] == pytest.approx(
+            reference[label_to_int[code.replace(".", "")]], abs=1e-5
+        ), code
+
+
+def test_ig_matches_pipeline_algorithm_full_model():
+    """The same with demographics, which IG holds at the patient's values."""
+    import backend.main as m
+    from backend.tests.ig_reference import pipeline_ig
+
+    label_to_int, pad, X = _encoded(IG_CODES)
+    body = {"age": 72, "female": 0, "pay1": 1, "zipinc_qrtl": 2, "icd_codes": IG_CODES}
+    served = client.post("/predict/", json=body).json()
+    ours = {c["code"]: c["attribution"] for c in served["readmission"]["explanation"]["contributions"]}
+    age = m.age_scaler.transform(pd.DataFrame({"AGE": [72]}))[0][0]
+    one_hot = lambda k, n: [np.array([1.0 if i == k else 0.0], np.float32) for i in range(n)]
+    inputs = ([X, np.array([age], np.float32), np.array([0.0], np.float32)]
+              + one_hot(0, 6) + one_hot(1, 4))
+    reference = pipeline_ig(m.readmit_model_path, inputs, pad)
+    for code in IG_CODES:
+        assert ours[code] == pytest.approx(
+            reference[label_to_int[code.replace(".", "")]], abs=1e-5
+        ), code
+
+
+def test_ig_attributions_are_complete():
+    """Attributions sum to the log-odds difference from an empty diagnosis
+    list, up to the 32-step approximation, which the response reports."""
+    for path, body in (("/predict/", {**FULL_BODY, "icd_codes": IG_CODES}),
+                       ("/predict_flex/", {"icd_codes": IG_CODES})):
+        response = client.post(path, json=body).json()
+        for outcome in ("readmission", "mortality"):
+            e = response[outcome]["explanation"]
+            total = sum(c["attribution"] for c in e["contributions"])
+            diff = e["log_odds"] - e["baseline_log_odds"]
+            assert total - diff == pytest.approx(e["completeness_gap"], abs=1e-4)
+            assert abs(e["completeness_gap"]) <= 0.15 * abs(diff) + 0.02, (path, outcome)
+            assert (e["method"], e["baseline"], e["steps"]) == (
+                "integrated_gradients", "empty_diagnosis_list", 32)
+
+
+def test_ig_log_odds_match_the_reported_risk():
+    response = client.post("/predict_flex/", json={"icd_codes": IG_CODES}).json()
+    for outcome in ("readmission", "mortality"):
+        section = response[outcome]
+        p = section["prediction"]
+        assert section["explanation"]["log_odds"] == pytest.approx(np.log(p / (1 - p)), abs=1e-3)
+
+
+def test_ig_skips_unknown_and_merges_duplicate_codes():
+    codes = ["I10", "i10", "QQ999", "E11.9"]
+    response = client.post("/predict_flex/", json={"icd_codes": codes}).json()
+    listed = [c["code"] for c in response["readmission"]["explanation"]["contributions"]]
+    assert sorted(listed) == ["E11.9", "I10"]
+
+
+def test_ig_leaves_served_weights_untouched():
+    """IG.py assigns into the embedding variable; under concurrent requests
+    that would corrupt other predictions. The served tables must not move."""
+    import backend.main as m
+
+    models = (m.model_readmit, m.model_mortality,
+              m.model_readmit_icd_only, m.model_mortality_icd_only)
+    before = [mod.get_layer("icd_embedding").embeddings.numpy().copy() for mod in models]
+    client.post("/predict/", json={**FULL_BODY, "icd_codes": IG_CODES})
+    client.post("/predict_flex/", json={"icd_codes": IG_CODES})
+    for mod, table in zip(models, before):
+        assert np.array_equal(mod.get_layer("icd_embedding").embeddings.numpy(), table)
