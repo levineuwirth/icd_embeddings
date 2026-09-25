@@ -1,8 +1,8 @@
 # ICD-10-CM Outcome Prediction
 
-A permutation-invariant deep-learning model for 30-day unplanned readmission and 30-day postdischarge mortality, trained on ICD-10-CM diagnosis-code sets from the Nationwide Readmissions Database. Code, deployed calculator, and supporting infrastructure for the manuscript intended for publication in *JAMA Network Open*.
+A permutation-invariant deep-learning model for 30-day unplanned readmission and 30-day postdischarge mortality, trained on ICD-10-CM diagnosis-code sets from the Nationwide Readmissions Database. Code, deployed calculator, and supporting infrastructure for the manuscript under review at the *Journal of the American Medical Informatics Association* (JAMIA).
 
-> Shu L\*, Neuwirth L\*, Wang X\*, Zheng H\*. *Beyond Comorbidity Indices: An Order-Invariant ICD-10-CM Embedding for Readmission and Mortality Prediction.* 
+> Shu L, Neuwirth L\*, Wang X\*, Zheng H\*. *Beyond Comorbidity Indices: An Order-Invariant ICD-10-CM Embedding for Readmission and Mortality Prediction.* 
 
 ## Why this exists
 
@@ -99,7 +99,7 @@ The Healthcare Cost and Utilization Project (HCUP) Nationwide Readmissions Datab
 - **Xilin Wang** — Department of Mathematics, Brown University
 - **Henry Zheng** — Department of Computer Science, Northeastern University
 
-\* Equal-contribution undergraduate authors.
+\* Equal contribution among undergraduate authors.
 
 ## Citation
 
@@ -107,7 +107,7 @@ The Healthcare Cost and Utilization Project (HCUP) Nationwide Readmissions Datab
 @article{shu2026icd,
   author  = {Shu, Liqi and Neuwirth, Levi and Wang, Xilin and Zheng, Henry},
   title   = {Beyond Comorbidity Indices: An Order-Invariant {ICD-10-CM} Embedding for Readmission and Mortality Prediction},
-  journal = {JAMA Network Open},
+  journal = {Journal of the American Medical Informatics Association},
   year    = {2026},
   note    = {Under review.},
   url     = {https://levineuwirth.org/essays/beyond-comorbidity-indices/}
