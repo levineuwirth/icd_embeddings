@@ -1,7 +1,7 @@
 // Input validation and display formatting for the calculator, kept free of
 // React so that `npm test` can check them with node:test.
 
-// The NRD cohort the models were trained on was adults only.
+// The paper reports an adult cohort, and the calculator is scoped to adults.
 export const MIN_AGE = 18;
 
 // Validate an age as typed. Mirrors backend/main.py's _validate_age:
@@ -15,7 +15,7 @@ export function validateAgeInput(age) {
   if (ageNum < MIN_AGE) {
     return {
       valid: false,
-      error: `Age must be ${MIN_AGE} or older: the models were trained on adult discharges.`,
+      error: `This calculator is for adults (${MIN_AGE} and older).`,
     };
   }
   if (ageNum >= 125) {
@@ -43,4 +43,18 @@ export function formatRiskPercent(p) {
     return '<0.001%';
   }
   return `${Number(pct.toPrecision(2))}%`;
+}
+
+// An Integrated Gradients attribution, a contribution to the log-odds, with
+// an explicit sign and a true minus so positive and negative line up.
+export function formatAttribution(a) {
+  const x = Number(a);
+  if (!Number.isFinite(x)) {
+    return '';
+  }
+  const magnitude = Math.abs(x).toFixed(2);
+  if (magnitude === '0.00') {
+    return '0.00';
+  }
+  return x > 0 ? `+${magnitude}` : `\u2212${magnitude}`;
 }

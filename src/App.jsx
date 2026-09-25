@@ -1,6 +1,37 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { formatRiskPercent, MIN_AGE, validateAgeInput } from './risk.js';
+import { formatAttribution, formatRiskPercent, MIN_AGE, validateAgeInput } from './risk.js';
+
+// Integrated Gradients contributions for one outcome: each entered code's
+// contribution to the log-odds, largest first, with a bar scaled to the
+// largest magnitude. Red raises the predicted risk, blue lowers it.
+const CodeContributions = ({ explanation }) => {
+  const contributions = explanation?.contributions ?? [];
+  if (contributions.length === 0) {
+    return null;
+  }
+  const largest = Math.max(...contributions.map(c => Math.abs(c.attribution)), 1e-9);
+  return (
+    <div style={{ margin: '0.25rem 0 1rem 0', fontSize: '0.8125rem' }}>
+      {contributions.map(({ code, attribution }) => (
+        <div key={code} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0.125rem 0' }}>
+          <span style={{ width: '5.5rem', fontFamily: 'monospace' }}>{code}</span>
+          <div style={{ flex: 1, height: '0.625rem', backgroundColor: '#f1f5f9', borderRadius: '2px' }}>
+            <div style={{
+              width: `${(100 * Math.abs(attribution)) / largest}%`,
+              height: '100%',
+              borderRadius: '2px',
+              backgroundColor: attribution >= 0 ? '#dc2626' : '#2563eb'
+            }} />
+          </div>
+          <span style={{ width: '3.5rem', textAlign: 'right', fontFamily: 'monospace' }}>
+            {formatAttribution(attribution)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 const OutcomeCalculator = () => {
   const API_URL = import.meta.env.VITE_API_BASE_URL;
@@ -526,6 +557,7 @@ const OutcomeCalculator = () => {
                     )}
                   </div>
                 </div>
+                <CodeContributions explanation={results.mortalityData?.explanation} />
 
                 <div className="outcome-row">
                   <span className="outcome-label">30-day <span className="readmission">readmission</span>:</span>
@@ -552,6 +584,15 @@ const OutcomeCalculator = () => {
                     )}
                   </div>
                 </div>
+                <CodeContributions explanation={results.readmissionData?.explanation} />
+                {results.readmissionData?.explanation && (
+                  <p style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.5rem' }}>
+                    Bars show each code's contribution to the log-odds of the predicted risk,
+                    by Integrated Gradients from an empty diagnosis list (32 steps, as in the
+                    paper). Together they sum, approximately, to the difference from the same
+                    patient with no diagnoses. They describe the model, not causes.
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -628,7 +669,7 @@ const OutcomeCalculator = () => {
           margin: '0 auto 1rem auto',
           textAlign: 'center'
         }}>
-          **Disclaimer: This tool is for educational and clinical decision support only. Always use clinical judgment and consult appropriate healthcare providers.**
+          **Disclaimer: This tool is for research and demonstration purposes, not for clinical decision-making.**
         </p>
         <p>Questions or comments? <a href="mailto:levi_neuwirth@brown.edu" className="footer-link">Email Us</a>.</p>
       </div>
