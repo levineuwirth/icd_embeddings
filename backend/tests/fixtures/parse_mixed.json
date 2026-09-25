@@ -1,0 +1,32 @@
+{
+  "request": {
+    "json": {
+      "text": "I10\nE11.9\nXYZ\nABC123"
+    },
+    "method": "POST",
+    "path": "/parse_icd_codes/"
+  },
+  "response": {
+    "json": {
+      "invalid_codes": [
+        {
+          "code": "XYZ",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "ABC123",
+          "reason": "invalid_code",
+          "suggestions": []
+        }
+      ],
+      "total_found": 4,
+      "valid_codes": [
+        "I10",
+        "E11.9"
+      ],
+      "warnings": []
+    },
+    "status": 200
+  }
+}

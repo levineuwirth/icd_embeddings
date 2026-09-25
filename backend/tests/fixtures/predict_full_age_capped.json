@@ -1,0 +1,64 @@
+{
+  "request": {
+    "json": {
+      "age": 95,
+      "female": 0,
+      "icd_codes": [
+        "I10"
+      ],
+      "pay1": 2,
+      "zipinc_qrtl": 2
+    },
+    "method": "POST",
+    "path": "/predict/"
+  },
+  "response": {
+    "json": {
+      "mortality": {
+        "explanation": {
+          "baseline": "empty_diagnosis_list",
+          "baseline_log_odds": -5.94775177535316,
+          "completeness_gap": 0.03223610669374466,
+          "contributions": [
+            {
+              "attribution": -0.02366279810667038,
+              "code": "I10"
+            }
+          ],
+          "log_odds": -6.003650680153575,
+          "method": "integrated_gradients",
+          "steps": 32
+        },
+        "high_risk": false,
+        "interpretation": "Low risk of 30-day mortality: below the model's threshold of 0.39%.",
+        "model_used": "full_demographic",
+        "prediction": 0.0024636357144319945,
+        "raw_prediction": 0.3891333043575287,
+        "threshold_used": 0.003887454805792665
+      },
+      "readmission": {
+        "explanation": {
+          "baseline": "empty_diagnosis_list",
+          "baseline_log_odds": -1.5805228044690027,
+          "completeness_gap": -0.01991814374923706,
+          "contributions": [
+            {
+              "attribution": -0.39743298292160034,
+              "code": "I10"
+            }
+          ],
+          "log_odds": -1.958037643641366,
+          "method": "integrated_gradients",
+          "steps": 32
+        },
+        "high_risk": true,
+        "interpretation": "High risk of 30-day readmission: at or above the model's threshold of 12.30%.",
+        "model_used": "full_demographic",
+        "prediction": 0.12367957397885128,
+        "raw_prediction": 0.5037209391593933,
+        "threshold_used": 0.12302168322722243
+      }
+    },
+    "status": 200
+  }
+}

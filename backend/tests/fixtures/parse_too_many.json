@@ -1,0 +1,210 @@
+{
+  "request": {
+    "json": {
+      "text": "I00, I01, I02, I03, I04, I05, I06, I07, I08, I09, I10, I11, I12, I13, I14, I15, I16, I17, I18, I19, I20, I21, I22, I23, I24, I25, I26, I27, I28, I29, I30, I31, I32, I33, I34, I35, I36, I37, I38, I39"
+    },
+    "method": "POST",
+    "path": "/parse_icd_codes/"
+  },
+  "response": {
+    "json": {
+      "invalid_codes": [
+        {
+          "code": "I01",
+          "description": "Rheumatic fever with heart involvement",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I02",
+          "description": "Rheumatic chorea",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I03",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "I04",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "I05",
+          "description": "Rheumatic mitral valve diseases",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I06",
+          "description": "Rheumatic aortic valve diseases",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I07",
+          "description": "Rheumatic tricuspid valve diseases",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I08",
+          "description": "Multiple valve diseases",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I09",
+          "description": "Other rheumatic heart diseases",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I11",
+          "description": "Hypertensive heart disease",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I12",
+          "description": "Hypertensive chronic kidney disease",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I13",
+          "description": "Hypertensive heart and chronic kidney disease",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I14",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "I15",
+          "description": "Secondary hypertension",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I16",
+          "description": "Hypertensive crisis",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I17",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "I18",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "I19",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "I20",
+          "description": "Angina pectoris",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I21",
+          "description": "Acute myocardial infarction",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I22",
+          "description": "Subsequent ST elevation (STEMI) and non-ST elevation (NSTEMI) myocardial infarction",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I23",
+          "description": "Certain current complications following ST elevation (STEMI) and non-ST elevation (NSTEMI) myocardial infarction (within the 28 day period)",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I24",
+          "description": "Other acute ischemic heart diseases",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I25",
+          "description": "Chronic ischemic heart disease",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I26",
+          "description": "Pulmonary embolism",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I27",
+          "description": "Other pulmonary heart diseases",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I28",
+          "description": "Other diseases of pulmonary vessels",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I29",
+          "reason": "invalid_code",
+          "suggestions": []
+        },
+        {
+          "code": "I30",
+          "description": "Acute pericarditis",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I31",
+          "description": "Other diseases of pericardium",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I33",
+          "description": "Acute and subacute endocarditis",
+          "reason": "not_in_training",
+          "suggestions": []
+        },
+        {
+          "code": "I34",
+          "description": "Nonrheumatic mitral valve disorders",
+          "reason": "not_in_training",
+          "suggestions": []
+        }
+      ],
+      "total_found": 40,
+      "valid_codes": [
+        "I00",
+        "I10",
+        "I32"
+      ],
+      "warnings": [
+        "Only the first 35 codes were processed. 5 codes were ignored."
+      ]
+    },
+    "status": 200
+  }
+}

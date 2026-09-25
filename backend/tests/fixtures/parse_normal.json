@@ -1,0 +1,22 @@
+{
+  "request": {
+    "json": {
+      "text": "I10, E11.9, J44.0"
+    },
+    "method": "POST",
+    "path": "/parse_icd_codes/"
+  },
+  "response": {
+    "json": {
+      "invalid_codes": [],
+      "total_found": 3,
+      "valid_codes": [
+        "I10",
+        "E11.9",
+        "J44.0"
+      ],
+      "warnings": []
+    },
+    "status": 200
+  }
+}

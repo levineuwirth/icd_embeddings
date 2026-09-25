@@ -27,3 +27,10 @@ dist-ssr
 backend/data/icd-10.zip
 backend/data/icd10_codes.json
 backend/data/Table and Index/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/

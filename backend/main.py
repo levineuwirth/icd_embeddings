@@ -9,7 +9,7 @@ import pickle
 import os
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -235,30 +235,30 @@ try:
     scaler_path = os.path.join(BASE_DIR, "model/full_age_scaler.pkl")
     icd_data_path = os.path.join(BASE_DIR, "data/icd10_codes.json")
 
-    print("Loading models...")
+    logger.info("Loading models...")
     model_readmit = load_model(readmit_model_path)
-    print(f"  Readmission model loaded: {model_readmit.name}")
+    logger.info(f"  Readmission model loaded: {model_readmit.name}")
 
     model_mortality = load_model(mortality_model_path)
-    print(f"  Mortality model loaded: {model_mortality.name}")
+    logger.info(f"  Mortality model loaded: {model_mortality.name}")
 
     model_readmit_icd_only = load_model(readmit_icd_only_path)
-    print(f"  Readmission ICD-only model loaded: {model_readmit_icd_only.name}")
+    logger.info(f"  Readmission ICD-only model loaded: {model_readmit_icd_only.name}")
 
     model_mortality_icd_only = load_model(mortality_icd_only_path)
-    print(f"  Mortality ICD-only model loaded: {model_mortality_icd_only.name}")
+    logger.info(f"  Mortality ICD-only model loaded: {model_mortality_icd_only.name}")
 
     with open(encoder_path, "rb") as file:
         encoder = pickle.load(file)
-    print(f"  ICD encoder loaded: {len(encoder.classes_)} unique codes")
+    logger.info(f"  ICD encoder loaded: {len(encoder.classes_)} unique codes")
 
     with open(scaler_path, "rb") as file:
         age_scaler = pickle.load(file)
-    print(f"  Age scaler loaded")
+    logger.info("  Age scaler loaded")
 
     with open(icd_data_path, "r", encoding="utf-8") as file:
         icd_codes = json.load(file)
-    print(f"  ICD-10 search database loaded: {len(icd_codes)} codes")
+    logger.info(f"  ICD-10 search database loaded: {len(icd_codes)} codes")
 
 except FileNotFoundError as e:
     raise RuntimeError(
@@ -266,12 +266,136 @@ except FileNotFoundError as e:
     ) from e
 
 
+# -----------------------------------------------------------------------------
+# Integrated Gradients: code-level explanations
+# -----------------------------------------------------------------------------
+#
+# The method of the paper's eMethods 3 and of the analysis pipeline's
+# src/feature_importance/IG.py (Rice-wxl/icd-10-embedding): the baseline is an
+# empty diagnosis list, every slot holding the NAN/padding embedding; the path
+# runs in IG_STEPS right-endpoint steps from it to the patient's embeddings;
+# the target is the model's logit; and gradients with respect to the code
+# embeddings are summed over the embedding dimension, giving one attribution
+# per code. Demographics are held at the patient's values.
+#
+# IG.py interpolates by assigning into the model's embedding variable. That is
+# safe offline and unsafe here, where requests run concurrently on a thread
+# pool, so each model is instead cut at its embedding output and the
+# interpolated embeddings are fed through the sub-model as one batch.
+
+IG_STEPS = 32
+IG_LOGIT_EPS = 1e-6  # IG.py's clip before taking the logit
+
+
+def _embedding_submodel(model):
+    """(sub-model from the ICD embedding output onward, embedding table)."""
+    embedding = model.get_layer("icd_embedding")
+    other_inputs = [i for i in model.inputs if i.name != "icd_codes"]
+    sub = tf.keras.Model(inputs=[embedding.output] + other_inputs, outputs=model.output)
+    return sub, embedding.embeddings
+
+
+IG_SUBMODELS = {
+    id(m): _embedding_submodel(m)
+    for m in (model_readmit, model_mortality, model_readmit_icd_only, model_mortality_icd_only)
+}
+
+
+def _logit(p):
+    p = tf.clip_by_value(p, IG_LOGIT_EPS, 1.0 - IG_LOGIT_EPS)
+    return tf.math.log(p) - tf.math.log1p(-p)
+
+
+def integrated_gradients(model, code_ids, other_inputs, pad_id):
+    """
+    Integrated Gradients for one patient.
+
+    Args:
+        model: one of the four served models.
+        code_ids: the 40 encoded diagnosis slots (padding included).
+        other_inputs: the model's remaining inputs for this patient, in model
+            order (empty for the ICD-only models), each of batch size 1.
+        pad_id: the encoder's NAN id, whose embedding fills empty slots.
+
+    Returns:
+        (per-slot attributions, logit at the input, logit at the baseline).
+        The attributions sum to approximately the difference of the two
+        logits; the remainder is the IG_STEPS-step approximation error.
+    """
+    sub, table = IG_SUBMODELS[id(model)]
+    ids = tf.constant(np.asarray(code_ids, dtype=np.int32))
+    x = tf.gather(table, ids)                                   # (40, D)
+    x0 = tf.repeat(tf.gather(table, [pad_id]), len(code_ids), axis=0)
+    delta = x - x0
+    alphas = tf.reshape(tf.range(1, IG_STEPS + 1, dtype=tf.float32) / IG_STEPS, (-1, 1, 1))
+    path = x0[None] + alphas * delta[None]                      # (steps, 40, D)
+    extra = [
+        tf.repeat(tf.reshape(tf.cast(v, tf.float32), (1, 1)), IG_STEPS, axis=0)
+        for v in other_inputs
+    ]
+    with tf.GradientTape() as tape:
+        tape.watch(path)
+        logits = _logit(tf.reshape(sub([path] + extra, training=False), (-1,)))
+        total = tf.reduce_sum(logits)
+    grads = tape.gradient(total, path)
+    per_slot = tf.reduce_sum(delta * tf.reduce_mean(grads, axis=0), axis=1)
+    baseline_out = sub([x0[None]] + [e[:1] for e in extra], training=False)
+    baseline_logit = _logit(tf.reshape(baseline_out, (-1,)))[0]
+    return per_slot.numpy(), float(logits[-1]), float(baseline_logit)
+
+
+def _explanation(model, code_ids, other_inputs, pad_id, input_codes, beta):
+    """The explanation section of one outcome's response.
+
+    Log-odds are reported on the calibrated scale. Calibration adds log(beta)
+    to the logit, so attributions, which are differences, are the same on
+    either scale.
+    """
+    per_slot, logit_x, logit_0 = integrated_gradients(model, code_ids, other_inputs, pad_id)
+    contributions: Dict[str, float] = {}
+    for i, code in enumerate(input_codes):
+        if code_ids[i] == pad_id:
+            continue  # unknown to the model: it sees an empty slot
+        contributions[code] = contributions.get(code, 0.0) + float(per_slot[i])
+    ranked = sorted(contributions.items(), key=lambda kv: -abs(kv[1]))
+    shift = float(np.log(beta))
+    return {
+        "method": "integrated_gradients",
+        "baseline": "empty_diagnosis_list",
+        "steps": IG_STEPS,
+        "log_odds": logit_x + shift,
+        "baseline_log_odds": logit_0 + shift,
+        "completeness_gap": float(np.sum(per_slot)) - (logit_x - logit_0),
+        "contributions": [{"code": c, "attribution": a} for c, a in ranked],
+    }
+
+
+MIN_AGE = 18
+
+
+def _validate_age(v: int) -> int:
+    """
+    Validate age:
+    - Ages under 18 are rejected: the paper reports an adult cohort, and the
+      calculator is scoped to adults
+    - Ages 90-124 are capped at 90 (the dataset lumps these together)
+    - Ages 125+ are rejected
+    """
+    if v < MIN_AGE:
+        raise ValueError(f"This calculator is for adults ({MIN_AGE} and older).")
+    if v >= 125:
+        raise ValueError("Age cannot be 125 or greater.")
+    if 90 <= v <= 124:
+        return 90
+    return v
+
+
 class PatientData(BaseModel):
     """
     Pydantic model for validating patient data input.
     """
 
-    age: int = Field(..., ge=0, description="Patient's age must be 0 or greater.")
+    age: int = Field(..., description="Patient's age; the calculator is for adults (18+).")
     female: int = Field(
         ..., ge=0, le=1, description="Patient's gender (0 for male, 1 for female)."
     )
@@ -286,19 +410,7 @@ class PatientData(BaseModel):
     @field_validator("age")
     @classmethod
     def validate_age(cls, v):
-        """
-        Validate age according to dataset constraints:
-        - Age cannot be less than 0
-        - Ages 90-124 are capped at 90 (dataset lumps these together)
-        - Ages 125+ are rejected
-        """
-        if v < 0:
-            raise ValueError("Age cannot be less than 0.")
-        if v >= 125:
-            raise ValueError("Age cannot be 125 or greater.")
-        if 90 <= v <= 124:
-            return 90
-        return v
+        return _validate_age(v)
 
 
 class PatientDataFlex(BaseModel):
@@ -330,82 +442,26 @@ class PatientDataFlex(BaseModel):
     @field_validator("age")
     @classmethod
     def validate_age(cls, v):
-        """
-        Validate age according to dataset constraints (when provided):
-        - Age cannot be less than 0
-        - Ages 90-124 are capped at 90 (dataset lumps these together)
-        - Ages 125+ are rejected
-        """
-        if v is None:
-            return v
-        if v < 0:
-            raise ValueError("Age cannot be less than 0.")
-        if v >= 125:
-            raise ValueError("Age cannot be 125 or greater.")
-        if 90 <= v <= 124:
-            return 90
-        return v
+        return None if v is None else _validate_age(v)
 
 
-def calibrate_probability(p_sampled, beta, eps=1e-8):
+def calibrate_probability(p_sampled, beta: float, eps: float = 1e-8) -> float:
     """
-    Correct predicted probabilities after undersampling.
+    Correct a predicted probability after undersampling.
 
     Args:
-        p_sampled: predicted probability from model trained on undersampled data
-        beta: undersampling ratio = (# majority after undersampling) / (# majority original)
-              OR equivalently: original_positive_rate (if you balanced to 50/50)
-        eps: small constant to avoid division by zero
+        p_sampled: probability from a model trained on undersampled data
+            (Python float or any numeric coercible to one).
+        beta: undersampling ratio = (# majority kept) / (# majority original).
+            When training was balanced 1:1 this equals the original odds of
+            the positive class, N+ / N-, not its rate N+ / N.
+        eps: small constant to avoid division by zero at the boundaries.
 
     Returns:
-        calibrated probability reflecting true population distribution
+        Calibrated probability reflecting the true population distribution.
     """
-    p_sampled = tf.clip_by_value(p_sampled, eps, 1 - eps)
-    return p_sampled / (p_sampled + (1 - p_sampled) / beta)
-
-
-def get_risk_interpretation(prediction: float) -> str:
-    """
-    Provides a brief interpretation of the prediction risk.
-
-    Args:
-        prediction (float): The predicted probability.
-
-    Returns:
-        str: A string interpreting the risk level.
-    """
-    if prediction < 0.2:
-        return "Low risk of 30-day readmission."
-    elif prediction < 0.5:
-        return "Moderate risk of 30-day readmission. Clinical discretion is advised."
-    else:
-        return (
-            "High risk of 30-day readmission. Consider intervention to mitigate risk."
-        )
-
-
-def calculate_prediction_ci(model, inputs, n_bootstraps=100, ci=0.95):
-    """
-    Calculates the 95% confidence interval for a single prediction using bootstrapping.
-
-    Args:
-        model: The trained Keras model.
-        inputs: The preprocessed input data for the model.
-        n_bootstraps (int): The number of bootstrap samples to generate.
-        ci (float): The confidence interval level.
-
-    Returns:
-        tuple: A tuple containing the lower and upper bounds of the confidence interval.
-    """
-    predictions = []
-    for _ in range(n_bootstraps):
-        pred = model.predict(inputs, verbose=0).flatten()[0]
-        noise = np.random.normal(0, 0.05)
-        predictions.append(pred + noise)
-
-    lower_bound = np.percentile(predictions, (1 - ci) / 2 * 100)
-    upper_bound = np.percentile(predictions, (1 + ci) / 2 * 100)
-    return max(0, lower_bound), min(1, upper_bound)
+    p = min(max(float(p_sampled), eps), 1 - eps)
+    return p / (p + (1 - p) / beta)
 
 
 @app.get("/")
@@ -416,506 +472,238 @@ def read_root():
     return {"message": "Welcome to the ICD Prediction API"}
 
 
-@app.post("/predict/")
-async def predict(data: PatientData):
+def _build_outcome_section(
+    *,
+    prediction: float,
+    raw_prediction,
+    high_risk: bool,
+    threshold: float,
+    outcome: str,
+    model_used: str,
+    explanation: dict,
+) -> dict:
+    """Render one outcome section (readmission or mortality) of a prediction response.
+
+    The interpretation follows ``high_risk``, the comparison with the model's
+    Youden threshold, so it cannot disagree with the flag. (It used to key on
+    a fixed 0.2, which read "Low risk" for every flagged mortality prediction:
+    the calibrated mortality threshold is about 0.4%.)
     """
-    Predicts both 30-day mortality and readmission risk for a patient.
+    if high_risk:
+        interpretation = (
+            f"High risk of 30-day {outcome}: at or above the model's "
+            f"threshold of {threshold:.2%}."
+        )
+    else:
+        interpretation = (
+            f"Low risk of 30-day {outcome}: below the model's "
+            f"threshold of {threshold:.2%}."
+        )
+    return {
+        "prediction": float(prediction),
+        "raw_prediction": float(raw_prediction),
+        "interpretation": interpretation,
+        "model_used": model_used,
+        "high_risk": high_risk,
+        "threshold_used": threshold,
+        "explanation": explanation,
+    }
 
-    Args:
-        data (PatientData): The patient's data.
 
-    Returns:
-        dict: A dictionary containing predictions for both mortality and readmission.
+def _run_prediction(
+    icd_codes: list,
+    demographics: Optional[dict] = None,
+) -> dict:
     """
-    try:
-        input_data = {
-            "AGE": [data.age],
-            "FEMALE": [data.female],
-            "PAY1": [float(data.pay1)],
-            "ZIPINC_QRTL": [float(data.zipinc_qrtl)],
-        }
+    Run prediction for ``icd_codes``, with or without demographic features.
 
-        for i in range(40):
-            if i < len(data.icd_codes):
-                input_data[f"I10_DX{i + 1}"] = [data.icd_codes[i]]
-            else:
-                input_data[f"I10_DX{i + 1}"] = [""]
+    When ``demographics`` is None, the demographics-free models are used;
+    when a demographics dict is provided (keys: age, female, pay1,
+    zipinc_qrtl), the full models run.
 
-        df = pd.DataFrame(input_data)
+    There is no confidence interval. The one this returned before was 100
+    identical forward passes plus N(0, 0.05) noise around the uncalibrated
+    score (or a fixed ±0.05 band), which measured nothing, and it cost about
+    200 forward passes per full-demographic request.
 
-        label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
-        unknown_label_int = (
-            encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
-        )
-
-        icd_columns = [f"I10_DX{i}" for i in range(1, 41)]
-
-        # Log incoming codes
-        logger.info(f"Prediction request - incoming codes: {data.icd_codes}")
-
-        # Track which codes get mapped to NAN
-        codes_mapped_to_nan = []
-        for col in icd_columns:
-            df[col] = df[col].astype(str).str.upper()
-            original_code = df[col].values[0]
-            # Normalize by removing periods before mapping
-            df[col] = df[col].str.replace(".", "", regex=False)
-            df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
-            if df[col].values[0] == unknown_label_int and original_code != "":
-                codes_mapped_to_nan.append(original_code)
-
-        if codes_mapped_to_nan:
-            logger.warning(f"Codes mapped to NAN: {codes_mapped_to_nan}")
-
-        # Check if all non-empty codes mapped to NAN (unknown)
-        non_empty_codes = df[icd_columns].values[0][: len(data.icd_codes)]
-        if len(non_empty_codes) > 0 and all(
-            code == unknown_label_int for code in non_empty_codes
-        ):
-            logger.error(f"All codes mapped to NAN - rejecting prediction")
-            raise HTTPException(
-                status_code=400,
-                detail="No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset.",
-            )
-
-        df["AGE"] = age_scaler.transform(df[["AGE"]])
-
-        df = pd.get_dummies(
-            df, columns=["PAY1", "ZIPINC_QRTL"], prefix=["PAY1", "ZIPINC_QRTL"]
-        )
-
-        pay1_columns = [f"PAY1_{float(i)}" for i in range(1, 7)]
-        zipinc_qrtl_columns = [f"ZIPINC_QRTL_{float(i)}" for i in range(1, 5)]
-
-        for col in pay1_columns + zipinc_qrtl_columns:
-            if col not in df.columns:
-                df[col] = 0
-
-        X_new = df[["AGE", "FEMALE"] + pay1_columns + zipinc_qrtl_columns + icd_columns]
-        X_new = X_new.astype("float32")
-
-        batch_inputs = (
-            [
-                X_new[icd_columns],
-                X_new["AGE"].values,
-                X_new["FEMALE"].values,
-            ]
-            + [X_new[col].values for col in pay1_columns]
-            + [X_new[col].values for col in zipinc_qrtl_columns]
-        )
-
-        readmission_raw = model_readmit.predict(batch_inputs, verbose=0).flatten()[0]
-        mortality_raw = model_mortality.predict(batch_inputs, verbose=0).flatten()[0]
-
-        readmission_prob = float(
-            calibrate_probability(readmission_raw, BETA_READMIT).numpy()
-        )
-        mortality_prob = float(
-            calibrate_probability(mortality_raw, BETA_MORTALITY).numpy()
-        )
-
-        readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(
-            model_readmit, batch_inputs
-        )
-        mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(
-            model_mortality, batch_inputs
-        )
-
-        threshold_readmit_adjusted = float(
-            calibrate_probability(THRESHOLD_READMIT_FULL, BETA_READMIT).numpy()
-        )
-        threshold_mortality_adjusted = float(
-            calibrate_probability(THRESHOLD_MORTALITY_FULL, BETA_MORTALITY).numpy()
-        )
-
-        readmission_high_risk = bool(readmission_prob >= threshold_readmit_adjusted)
-        mortality_high_risk = bool(mortality_prob >= threshold_mortality_adjusted)
-
-        logger.info(
-            f"Prediction successful - Readmission: {readmission_prob:.4f}, Mortality: {mortality_prob:.4f}"
-        )
-
-        if readmission_prob < 0.2:
-            readmission_interpretation = "Low risk of 30-day readmission."
-        elif readmission_high_risk:
-            readmission_interpretation = "High risk of 30-day readmission. Consider intervention to mitigate risk."
-        else:
-            readmission_interpretation = (
-                "Moderate risk of 30-day readmission. Clinical discretion is advised."
-            )
-
-        if mortality_prob < 0.2:
-            mortality_interpretation = "Low risk of 30-day mortality."
-        elif mortality_high_risk:
-            mortality_interpretation = (
-                "High risk of 30-day mortality. Consider intervention to mitigate risk."
-            )
-        else:
-            mortality_interpretation = (
-                "Moderate risk of 30-day mortality. Clinical discretion is advised."
-            )
-
-        return {
-            "readmission": {
-                "prediction": float(readmission_prob),
-                "raw_prediction": float(readmission_raw),
-                "confidence_interval": [
-                    float(readmission_lower_ci),
-                    float(readmission_upper_ci),
-                ],
-                "interpretation": readmission_interpretation,
-                "model_used": "full_demographic",
-                "high_risk": readmission_high_risk,
-                "threshold_used": threshold_readmit_adjusted,
-            },
-            "mortality": {
-                "prediction": float(mortality_prob),
-                "raw_prediction": float(mortality_raw),
-                "confidence_interval": [
-                    float(mortality_lower_ci),
-                    float(mortality_upper_ci),
-                ],
-                "interpretation": mortality_interpretation,
-                "model_used": "full_demographic",
-                "high_risk": mortality_high_risk,
-                "threshold_used": threshold_mortality_adjusted,
-            },
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def predict_icd_only(icd_codes: list[str]) -> dict:
+    Raises ``HTTPException(400)`` if every non-empty code maps to the
+    encoder's NAN sentinel, matching the legacy guard.
     """
-    Predict using ICD-only models (no demographic data required).
-    Applies risk adjustment to correct for undersampling and classifies risk.
+    use_full = demographics is not None
+    model_used = "full_demographic" if use_full else "icd_only"
 
-    Args:
-        icd_codes: List of ICD-10 diagnosis codes.
-
-    Returns:
-        dict: Prediction results for readmission and mortality with adjusted risk.
-    """
-    input_data = {}
+    # ICD slots are always padded to 40 positions.
+    input_data: dict = {}
+    if use_full:
+        input_data["AGE"] = [demographics["age"]]
+        input_data["FEMALE"] = [demographics["female"]]
+        input_data["PAY1"] = [float(demographics["pay1"])]
+        input_data["ZIPINC_QRTL"] = [float(demographics["zipinc_qrtl"])]
     for i in range(40):
-        if i < len(icd_codes):
-            input_data[f"I10_DX{i + 1}"] = [icd_codes[i]]
-        else:
-            input_data[f"I10_DX{i + 1}"] = [""]
-
+        input_data[f"I10_DX{i + 1}"] = [
+            icd_codes[i] if i < len(icd_codes) else ""
+        ]
     df = pd.DataFrame(input_data)
 
     label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
     unknown_label_int = (
         encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
     )
-
     icd_columns = [f"I10_DX{i}" for i in range(1, 41)]
 
-    # Log incoming codes
-    logger.info(f"ICD-only prediction request - incoming codes: {icd_codes}")
+    # Inputs are not stored: log how many codes arrived, never which.
+    logger.info(f"Prediction request ({model_used}) - {len(icd_codes)} codes")
 
-    # Track which codes get mapped to NAN
     codes_mapped_to_nan = []
     for col in icd_columns:
         df[col] = df[col].astype(str).str.upper()
         original_code = df[col].values[0]
-        # Normalize by removing periods before mapping
         df[col] = df[col].str.replace(".", "", regex=False)
         df[col] = df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
         if df[col].values[0] == unknown_label_int and original_code != "":
             codes_mapped_to_nan.append(original_code)
-
     if codes_mapped_to_nan:
-        logger.warning(f"Codes mapped to NAN: {codes_mapped_to_nan}")
+        logger.warning(f"{len(codes_mapped_to_nan)} codes mapped to NAN")
 
-    # Check if all non-empty codes mapped to NAN (unknown)
     non_empty_codes = df[icd_columns].values[0][: len(icd_codes)]
     if len(non_empty_codes) > 0 and all(
         code == unknown_label_int for code in non_empty_codes
     ):
-        logger.error(f"All codes mapped to NAN - rejecting prediction")
+        logger.error("All codes mapped to NAN - rejecting prediction")
         raise HTTPException(
             status_code=400,
             detail="No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset.",
         )
 
-    X_new = df[icd_columns].astype("float32")
+    if use_full:
+        df["AGE"] = age_scaler.transform(df[["AGE"]])
+        df = pd.get_dummies(
+            df, columns=["PAY1", "ZIPINC_QRTL"], prefix=["PAY1", "ZIPINC_QRTL"]
+        )
+        pay1_columns = [f"PAY1_{float(i)}" for i in range(1, 7)]
+        zipinc_qrtl_columns = [f"ZIPINC_QRTL_{float(i)}" for i in range(1, 5)]
+        for col in pay1_columns + zipinc_qrtl_columns:
+            if col not in df.columns:
+                df[col] = 0
+        X_new = df[
+            ["AGE", "FEMALE"] + pay1_columns + zipinc_qrtl_columns + icd_columns
+        ].astype("float32")
+        model_inputs = (
+            [X_new[icd_columns], X_new["AGE"].values, X_new["FEMALE"].values]
+            + [X_new[col].values for col in pay1_columns]
+            + [X_new[col].values for col in zipinc_qrtl_columns]
+        )
+        readmit_model = model_readmit
+        mortality_model = model_mortality
+        readmit_threshold_raw = THRESHOLD_READMIT_FULL
+        mortality_threshold_raw = THRESHOLD_MORTALITY_FULL
+    else:
+        X_new = df[icd_columns].astype("float32")
+        model_inputs = X_new.values
+        readmit_model = model_readmit_icd_only
+        mortality_model = model_mortality_icd_only
+        readmit_threshold_raw = THRESHOLD_READMIT_ICD_ONLY
+        mortality_threshold_raw = THRESHOLD_MORTALITY_ICD_ONLY
 
-    readmission_raw = model_readmit_icd_only.predict(X_new.values, verbose=0).flatten()[
-        0
-    ]
-    mortality_raw = model_mortality_icd_only.predict(X_new.values, verbose=0).flatten()[
-        0
-    ]
+    readmission_raw = readmit_model.predict(model_inputs, verbose=0).flatten()[0]
+    mortality_raw = mortality_model.predict(model_inputs, verbose=0).flatten()[0]
 
-    readmission_adjusted = float(
-        calibrate_probability(readmission_raw, BETA_READMIT).numpy()
-    )
-    mortality_adjusted = float(
-        calibrate_probability(mortality_raw, BETA_MORTALITY).numpy()
+    readmission_prob = calibrate_probability(readmission_raw, BETA_READMIT)
+    mortality_prob = calibrate_probability(mortality_raw, BETA_MORTALITY)
+
+    readmit_threshold = calibrate_probability(readmit_threshold_raw, BETA_READMIT)
+    mortality_threshold = calibrate_probability(
+        mortality_threshold_raw, BETA_MORTALITY
     )
 
-    threshold_readmit_adjusted = float(
-        calibrate_probability(THRESHOLD_READMIT_ICD_ONLY, BETA_READMIT).numpy()
-    )
-    threshold_mortality_adjusted = float(
-        calibrate_probability(THRESHOLD_MORTALITY_ICD_ONLY, BETA_MORTALITY).numpy()
-    )
+    readmission_high_risk = bool(readmission_prob >= readmit_threshold)
+    mortality_high_risk = bool(mortality_prob >= mortality_threshold)
 
-    readmission_high_risk = bool(readmission_adjusted >= threshold_readmit_adjusted)
-    mortality_high_risk = bool(mortality_adjusted >= threshold_mortality_adjusted)
+    code_ids = [int(v) for v in df[icd_columns].values[0]]
+    input_codes = [str(c).strip().upper() for c in icd_codes[:40]]
+    other_inputs = (
+        [np.asarray(v).reshape(-1)[0] for v in model_inputs[1:]] if use_full else []
+    )
+    readmission_explanation = _explanation(
+        readmit_model, code_ids, other_inputs, unknown_label_int, input_codes, BETA_READMIT
+    )
+    mortality_explanation = _explanation(
+        mortality_model, code_ids, other_inputs, unknown_label_int, input_codes, BETA_MORTALITY
+    )
 
     logger.info(
-        f"ICD-only prediction successful - Readmission: {readmission_adjusted:.4f}, Mortality: {mortality_adjusted:.4f}"
+        f"Prediction successful ({model_used}) - "
+        f"Readmission: {readmission_prob:.4f}, Mortality: {mortality_prob:.4f}"
     )
 
-    if readmission_adjusted < 0.2:
-        readmission_interpretation = "Low risk of 30-day readmission."
-    elif readmission_high_risk:
-        readmission_interpretation = (
-            "High risk of 30-day readmission. Consider intervention to mitigate risk."
-        )
-    else:
-        readmission_interpretation = (
-            "Moderate risk of 30-day readmission. Clinical discretion is advised."
-        )
-
-    if mortality_adjusted < 0.2:
-        mortality_interpretation = "Low risk of 30-day mortality."
-    elif mortality_high_risk:
-        mortality_interpretation = (
-            "High risk of 30-day mortality. Consider intervention to mitigate risk."
-        )
-    else:
-        mortality_interpretation = (
-            "Moderate risk of 30-day mortality. Clinical discretion is advised."
-        )
-
-    readmission_ci_lower = max(0, readmission_adjusted - 0.05)
-    readmission_ci_upper = min(1, readmission_adjusted + 0.05)
-    mortality_ci_lower = max(0, mortality_adjusted - 0.05)
-    mortality_ci_upper = min(1, mortality_adjusted + 0.05)
-
     return {
-        "readmission": {
-            "prediction": readmission_adjusted,
-            "raw_prediction": float(readmission_raw),
-            "confidence_interval": [readmission_ci_lower, readmission_ci_upper],
-            "interpretation": readmission_interpretation,
-            "model_used": "icd_only",
-            "high_risk": readmission_high_risk,
-            "threshold_used": threshold_readmit_adjusted,
-        },
-        "mortality": {
-            "prediction": mortality_adjusted,
-            "raw_prediction": float(mortality_raw),
-            "confidence_interval": [mortality_ci_lower, mortality_ci_upper],
-            "interpretation": mortality_interpretation,
-            "model_used": "icd_only",
-            "high_risk": mortality_high_risk,
-            "threshold_used": threshold_mortality_adjusted,
-        },
+        "readmission": _build_outcome_section(
+            prediction=readmission_prob,
+            raw_prediction=readmission_raw,
+            high_risk=readmission_high_risk,
+            threshold=readmit_threshold,
+            outcome="readmission",
+            model_used=model_used,
+            explanation=readmission_explanation,
+        ),
+        "mortality": _build_outcome_section(
+            prediction=mortality_prob,
+            raw_prediction=mortality_raw,
+            high_risk=mortality_high_risk,
+            threshold=mortality_threshold,
+            outcome="mortality",
+            model_used=model_used,
+            explanation=mortality_explanation,
+        ),
     }
 
 
+@app.post("/predict/")
+def predict(data: PatientData):
+    """Predict 30-day readmission and mortality risk with full demographics."""
+    try:
+        return _run_prediction(
+            data.icd_codes,
+            demographics={
+                "age": data.age,
+                "female": data.female,
+                "pay1": data.pay1,
+                "zipinc_qrtl": data.zipinc_qrtl,
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/predict_flex/")
-async def predict_flex(data: PatientDataFlex):
-    """
-    Flexible prediction endpoint that routes to appropriate model based on available data.
-
-    - If ALL demographic data is provided (age, gender, pay1, zipinc_qrtl): uses full demographic model
-    - If ANY demographic data is missing: uses ICD-only model (ignores partial demographics)
-
-    Args:
-        data (PatientDataFlex): Patient data with optional demographic fields.
-
-    Returns:
-        dict: Predictions with metadata about which model was used.
-    """
+def predict_flex(data: PatientDataFlex):
+    """Predict using full demographics if all are provided, else fall back to ICD-only."""
     try:
         has_all_demographics = all(
-            [
-                data.age is not None,
-                data.female is not None,
-                data.pay1 is not None,
-                data.zipinc_qrtl is not None,
-            ]
+            v is not None
+            for v in (data.age, data.female, data.pay1, data.zipinc_qrtl)
         )
-
-        if has_all_demographics:
-            input_data = {
-                "AGE": [data.age],
-                "FEMALE": [data.female],
-                "PAY1": [float(data.pay1)],
-                "ZIPINC_QRTL": [float(data.zipinc_qrtl)],
+        demographics = (
+            {
+                "age": data.age,
+                "female": data.female,
+                "pay1": data.pay1,
+                "zipinc_qrtl": data.zipinc_qrtl,
             }
-
-            for i in range(40):
-                if i < len(data.icd_codes):
-                    input_data[f"I10_DX{i + 1}"] = [data.icd_codes[i]]
-                else:
-                    input_data[f"I10_DX{i + 1}"] = [""]
-
-            df = pd.DataFrame(input_data)
-
-            label_to_int = {label: idx for idx, label in enumerate(encoder.classes_)}
-            unknown_label_int = (
-                encoder.transform(["NAN"])[0] if "NAN" in encoder.classes_ else 0
-            )
-
-            icd_columns = [f"I10_DX{i}" for i in range(1, 41)]
-
-            # Log incoming codes
-            logger.info(
-                f"Flexible prediction request (full demographic) - incoming codes: {data.icd_codes}"
-            )
-
-            # Track which codes get mapped to NAN
-            codes_mapped_to_nan = []
-            for col in icd_columns:
-                df[col] = df[col].astype(str).str.upper()
-                original_code = df[col].values[0]
-                # Normalize by removing periods before mapping
-                df[col] = df[col].str.replace(".", "", regex=False)
-                df[col] = (
-                    df[col].map(label_to_int).fillna(unknown_label_int).astype(int)
-                )
-                if df[col].values[0] == unknown_label_int and original_code != "":
-                    codes_mapped_to_nan.append(original_code)
-
-            if codes_mapped_to_nan:
-                logger.warning(f"Codes mapped to NAN: {codes_mapped_to_nan}")
-
-            # Check if all non-empty codes mapped to NAN (unknown)
-            non_empty_codes = df[icd_columns].values[0][: len(data.icd_codes)]
-            if len(non_empty_codes) > 0 and all(
-                code == unknown_label_int for code in non_empty_codes
-            ):
-                logger.error(f"All codes mapped to NAN - rejecting prediction")
-                raise HTTPException(
-                    status_code=400,
-                    detail="No valid codes from the training dataset were provided. All codes are either invalid or not in the training dataset.",
-                )
-
-            df["AGE"] = age_scaler.transform(df[["AGE"]])
-
-            df = pd.get_dummies(
-                df, columns=["PAY1", "ZIPINC_QRTL"], prefix=["PAY1", "ZIPINC_QRTL"]
-            )
-
-            pay1_columns = [f"PAY1_{float(i)}" for i in range(1, 7)]
-            zipinc_qrtl_columns = [f"ZIPINC_QRTL_{float(i)}" for i in range(1, 5)]
-
-            for col in pay1_columns + zipinc_qrtl_columns:
-                if col not in df.columns:
-                    df[col] = 0
-
-            X_new = df[
-                ["AGE", "FEMALE"] + pay1_columns + zipinc_qrtl_columns + icd_columns
-            ]
-            X_new = X_new.astype("float32")
-
-            batch_inputs = (
-                [
-                    X_new[icd_columns],
-                    X_new["AGE"].values,
-                    X_new["FEMALE"].values,
-                ]
-                + [X_new[col].values for col in pay1_columns]
-                + [X_new[col].values for col in zipinc_qrtl_columns]
-            )
-
-            readmission_raw = model_readmit.predict(batch_inputs, verbose=0).flatten()[
-                0
-            ]
-            mortality_raw = model_mortality.predict(batch_inputs, verbose=0).flatten()[
-                0
-            ]
-
-            readmission_prob = float(
-                calibrate_probability(readmission_raw, BETA_READMIT).numpy()
-            )
-            mortality_prob = float(
-                calibrate_probability(mortality_raw, BETA_MORTALITY).numpy()
-            )
-
-            readmission_lower_ci, readmission_upper_ci = calculate_prediction_ci(
-                model_readmit, batch_inputs
-            )
-            mortality_lower_ci, mortality_upper_ci = calculate_prediction_ci(
-                model_mortality, batch_inputs
-            )
-
-            threshold_readmit_adjusted = float(
-                calibrate_probability(THRESHOLD_READMIT_FULL, BETA_READMIT).numpy()
-            )
-            threshold_mortality_adjusted = float(
-                calibrate_probability(THRESHOLD_MORTALITY_FULL, BETA_MORTALITY).numpy()
-            )
-
-            readmission_high_risk = bool(readmission_prob >= threshold_readmit_adjusted)
-            mortality_high_risk = bool(mortality_prob >= threshold_mortality_adjusted)
-
-            logger.info(
-                f"Flexible prediction (full demographic) successful - Readmission: {readmission_prob:.4f}, Mortality: {mortality_prob:.4f}"
-            )
-
-            if readmission_prob < 0.2:
-                readmission_interpretation = "Low risk of 30-day readmission."
-            elif readmission_high_risk:
-                readmission_interpretation = "High risk of 30-day readmission. Consider intervention to mitigate risk."
-            else:
-                readmission_interpretation = "Moderate risk of 30-day readmission. Clinical discretion is advised."
-
-            if mortality_prob < 0.2:
-                mortality_interpretation = "Low risk of 30-day mortality."
-            elif mortality_high_risk:
-                mortality_interpretation = "High risk of 30-day mortality. Consider intervention to mitigate risk."
-            else:
-                mortality_interpretation = (
-                    "Moderate risk of 30-day mortality. Clinical discretion is advised."
-                )
-
-            return {
-                "readmission": {
-                    "prediction": float(readmission_prob),
-                    "raw_prediction": float(readmission_raw),
-                    "confidence_interval": [
-                        float(readmission_lower_ci),
-                        float(readmission_upper_ci),
-                    ],
-                    "interpretation": readmission_interpretation,
-                    "model_used": "full_demographic",
-                    "high_risk": readmission_high_risk,
-                    "threshold_used": threshold_readmit_adjusted,
-                },
-                "mortality": {
-                    "prediction": float(mortality_prob),
-                    "raw_prediction": float(mortality_raw),
-                    "confidence_interval": [
-                        float(mortality_lower_ci),
-                        float(mortality_upper_ci),
-                    ],
-                    "interpretation": mortality_interpretation,
-                    "model_used": "full_demographic",
-                    "high_risk": mortality_high_risk,
-                    "threshold_used": threshold_mortality_adjusted,
-                },
-            }
-        else:
-            logger.info(
-                f"Flexible prediction request (ICD-only fallback) - incoming codes: {data.icd_codes}"
-            )
-            result = predict_icd_only(data.icd_codes)
-            return result
-
+            if has_all_demographics
+            else None
+        )
+        return _run_prediction(data.icd_codes, demographics=demographics)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/search_icd/")
-async def search_icd(q: str, limit: int = 50):
+def search_icd(q: str, limit: int = 50):
     """
     Searches for ICD-10 codes and their descriptions.
 
@@ -971,7 +759,7 @@ async def search_icd(q: str, limit: int = 50):
     return results
 
 
-def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
+def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, Any]:
     """
     Flexibly parse ICD codes from text supporting multiple formats.
 
@@ -1064,7 +852,7 @@ def parse_icd_codes_from_text(text: str, max_codes: int = 35) -> Dict[str, any]:
 
 
 @app.post("/parse_icd_codes/")
-async def parse_icd_codes(data: dict):
+def parse_icd_codes(data: dict):
     """
     Parse ICD codes from pasted text with flexible format support.
 

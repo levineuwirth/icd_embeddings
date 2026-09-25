@@ -1,0 +1,19 @@
+{
+  "request": {
+    "method": "GET",
+    "params": {
+      "q": "I10"
+    },
+    "path": "/search_icd/"
+  },
+  "response": {
+    "json": [
+      {
+        "code": "I10",
+        "description": "Essential (primary) hypertension",
+        "in_training_dataset": true
+      }
+    ],
+    "status": 200
+  }
+}
