@@ -88,6 +88,8 @@ curl -X POST "https://levineuwirth-icd-embeddings.hf.space/predict_flex/" \
   }'
 ```
 
+Each outcome in a prediction response carries an `explanation`: per-code Integrated Gradients attributions computed as in the paper's eMethods 3, from an empty diagnosis list in 32 steps, with the model's logit as target and demographics held at the patient's values. `contributions` lists the entered codes with their signed contributions to the log-odds of the predicted risk, largest first; they sum to `log_odds − baseline_log_odds` up to `completeness_gap`, the 32-step approximation error. Codes outside the training vocabulary are omitted, since the model sees them as empty slots. `backend/tests/ig_reference.py` checks the served attributions against the analysis pipeline's own implementation.
+
 ## Data and ethics
 
 The Healthcare Cost and Utilization Project (HCUP) Nationwide Readmissions Database is governed by the HCUP data use agreement. Because the NRD contains de-identified data, the institutional review board determined the study was not human-participants research and that informed consent was not required.
