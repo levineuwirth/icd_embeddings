@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import { formatRiskPercent, MIN_AGE, validateAgeInput } from './risk.js';
 
 const OutcomeCalculator = () => {
   const API_URL = import.meta.env.VITE_API_BASE_URL;
@@ -28,6 +29,19 @@ const OutcomeCalculator = () => {
   const [isCalculating, setIsCalculating] = useState(false);
   const [icdSearchQuery, setIcdSearchQuery] = useState('');
   const [icdLookupResults, setIcdLookupResults] = useState([]);
+  // 'waking' | 'ready' | 'unreachable'
+  const [serverStatus, setServerStatus] = useState('waking');
+
+  // The backend is a Hugging Face Space that sleeps when idle and takes tens
+  // of seconds to wake. Wake it on page load, while the form is filled in,
+  // rather than on the first Calculate.
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API_URL}/`, { timeout: 120000 })
+      .then(() => { if (!cancelled) setServerStatus('ready'); })
+      .catch(() => { if (!cancelled) setServerStatus('unreachable'); });
+    return () => { cancelled = true; };
+  }, [API_URL]);
 
   const primaryPayerOptions = [
     'Medicare',
@@ -39,35 +53,10 @@ const OutcomeCalculator = () => {
   ];
 
   const validateAge = (age) => {
-    const ageNum = parseInt(age);
-
-    if (age === '' || isNaN(ageNum)) {
-      setAgeError('');
-      setAgeWarning('');
-      return { valid: false, error: '' };
-    }
-
-    if (ageNum < 0) {
-      setAgeError('Age cannot be less than 0.');
-      setAgeWarning('');
-      return { valid: false, error: 'Age cannot be less than 0.' };
-    }
-
-    if (ageNum >= 125) {
-      setAgeError('Age cannot be 125 or greater.');
-      setAgeWarning('');
-      return { valid: false, error: 'Age cannot be 125 or greater.' };
-    }
-
-    if (ageNum >= 90 && ageNum <= 124) {
-      setAgeError('');
-      setAgeWarning('');
-      return { valid: true, adjustedAge: 90 };
-    }
-
-    setAgeError('');
+    const result = validateAgeInput(age);
+    setAgeError(result.error);
     setAgeWarning('');
-    return { valid: true, adjustedAge: ageNum };
+    return result;
   };
 
   const handleInputChange = (field, value) => {
@@ -256,9 +245,10 @@ const OutcomeCalculator = () => {
       const response = await axios.post(`${API_URL}/predict_flex/`, payload);
       const { readmission, mortality } = response.data;
 
+      setServerStatus('ready');
       setResults({
-        readmission30: `${(readmission.prediction * 100).toFixed(1)}%`,
-        mortality30: `${(mortality.prediction * 100).toFixed(1)}%`,
+        readmission30: formatRiskPercent(readmission.prediction),
+        mortality30: formatRiskPercent(mortality.prediction),
         readmissionData: readmission,
         mortalityData: mortality
       });
@@ -301,7 +291,8 @@ const OutcomeCalculator = () => {
               <div style={{ flex: 1 }}>
                 <input
                   type="number"
-                  placeholder="years"
+                  min={MIN_AGE}
+                  placeholder="years (18+)"
                   className="form-input"
                   value={formData.age}
                   onChange={(e) => handleInputChange('age', e.target.value)}
@@ -483,6 +474,13 @@ const OutcomeCalculator = () => {
           >
             {isCalculating ? 'Calculating...' : 'Calculate'}
           </button>
+          {serverStatus !== 'ready' && (
+            <p style={{ fontSize: '0.875rem', color: '#666', marginTop: '0.5rem' }}>
+              {serverStatus === 'waking'
+                ? 'Starting the prediction server. The first result can take up to a minute.'
+                : 'The prediction server did not respond. Pressing Calculate will try again.'}
+            </p>
+          )}
         </div>
 
         {/* Results */}
