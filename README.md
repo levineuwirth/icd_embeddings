@@ -1,3 +1,13 @@
+---
+title: ICD Prediction API
+emoji: 🏥
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+app_port: 7860
+---
+
 # ICD-10-CM Outcome Prediction
 
 A permutation-invariant deep-learning model for 30-day unplanned readmission and 30-day postdischarge mortality, trained on ICD-10-CM diagnosis-code sets from the Nationwide Readmissions Database. Code, deployed calculator, and supporting infrastructure for the manuscript under review at the *Journal of the American Medical Informatics Association* (JAMIA).
